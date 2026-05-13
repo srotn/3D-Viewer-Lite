@@ -1,0 +1,11 @@
+﻿#pragma once
+#include <cmath>
+#include <d2d1.h>
+#include <fstream>
+#include <string>
+#include <set>
+#include <iostream>
+#include <windows.h>
+#include <vector>
+#pragma comment(lib, "d2d1.lib")
+#include <unordered_map>
