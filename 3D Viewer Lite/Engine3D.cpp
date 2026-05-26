@@ -232,6 +232,13 @@ void Engine3D::DrawMesh3D(mesh3D& Centered, float fElapsedTime)
         {
             DrawTriangle(Projected.tris[i], 128, RGB(0, 0, 0));
         }
+
+        //lighting
+        double NormalVector[3] = {
+            (Projected.tris[i].point[1].y - Projected.tris[i].point[0].y) * (Projected.tris[i].point[2].z - Projected.tris[i].point[0].z) - (Projected.tris[i].point[1].z - Projected.tris[i].point[0].z) * (Projected.tris[i].point[2].y - Projected.tris[i].point[0].y),
+            (Projected.tris[i].point[1].z - Projected.tris[i].point[0].z) * (Projected.tris[i].point[2].x - Projected.tris[i].point[0].x) - (Projected.tris[i].point[1].x - Projected.tris[i].point[0].x) * (Projected.tris[i].point[2].z - Projected.tris[i].point[0].z),
+            (Projected.tris[i].point[1].x - Projected.tris[i].point[0].x) * (Projected.tris[i].point[2].y - Projected.tris[i].point[0].y) - (Projected.tris[i].point[1].y - Projected.tris[i].point[0].y) * (Projected.tris[i].point[2].x - Projected.tris[i].point[0].x)
+        };
     }
 }
 
@@ -281,7 +288,7 @@ mesh3D Engine3D::MoveToCenter(mesh3D mesh)
 bool Engine3D::OnUserCreate()
 {
     // read obj file
-    std::ifstream file("Old Teapot.obj");
+    std::ifstream file("icosahedron.obj");
     if (!file.is_open()) {
         std::cerr << "无法打开文件！" << std::endl;
         return false;
