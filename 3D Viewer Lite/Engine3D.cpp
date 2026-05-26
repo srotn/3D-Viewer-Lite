@@ -6,32 +6,51 @@ Engine3D::Engine3D()
 
 Engine3D::~Engine3D()
 {
-    // 清理笔刷缓存
+    // 清理笔刷缓存（防空检查）
     for (auto& pair : m_brushCache)
     {
-        pair.second->Release();
+        if (pair.second) pair.second->Release();
     }
-    if (m_pRenderTarget) m_pRenderTarget->Release();
-    if (m_pD2DFactory) m_pD2DFactory->Release();
+    m_brushCache.clear();
+
+    if (m_pRenderTarget) { m_pRenderTarget->Release(); m_pRenderTarget = nullptr; }
+    if (m_pD2DFactory) { m_pD2DFactory->Release(); m_pD2DFactory = nullptr; }
 }
 
 bool Engine3D::Initialize(HWND hwnd)
 {
     m_hwnd = hwnd;
-    HRESULT hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &m_pD2DFactory);
-    if (FAILED(hr)) return false;
+
+    // 只在尚未创建 factory 时创建
+    if (!m_pD2DFactory)
+    {
+        HRESULT hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &m_pD2DFactory);
+        if (FAILED(hr)) return false;
+    }
 
     RECT rc;
     GetClientRect(hwnd, &rc);
     m_width = rc.right - rc.left;
     m_height = rc.bottom - rc.top;
 
-    hr = m_pD2DFactory->CreateHwndRenderTarget(
+    // 释放旧渲染目标（若存在），以便安全重建
+    if (m_pRenderTarget)
+    {
+        m_pRenderTarget->Release();
+        m_pRenderTarget = nullptr;
+    }
+
+    HRESULT hr = m_pD2DFactory->CreateHwndRenderTarget(
         D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_DEFAULT,
             D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE)),
         D2D1::HwndRenderTargetProperties(hwnd, D2D1::SizeU(m_width, m_height)),
         &m_pRenderTarget
     );
+
+    QueryPerformanceFrequency(&m_freq);
+    QueryPerformanceCounter(&m_lastTime);
+    m_firstFrame = true;
+
     return SUCCEEDED(hr);
 }
 
@@ -58,7 +77,16 @@ void Engine3D::EndDraw()
         HRESULT hr = m_pRenderTarget->EndDraw();
         if (hr == D2DERR_RECREATE_TARGET)
         {
-            // 重建渲染目标
+            // 先释放并清空与旧渲染目标绑定的资源（笔刷等）
+            for (auto& pair : m_brushCache)
+            {
+                if (pair.second) pair.second->Release();
+            }
+            m_brushCache.clear();
+
+            if (m_pRenderTarget) { m_pRenderTarget->Release(); m_pRenderTarget = nullptr; }
+
+            // 重新初始化渲染目标（factory 已由 Initialize 管理）
             Initialize(m_hwnd);
         }
     }
@@ -76,6 +104,9 @@ int Engine3D::ScreenWidth()
 
 ID2D1SolidColorBrush* Engine3D::GetBrush(COLORREF color)
 {
+    // 如果没有有效渲染目标，直接返回空，调用方应检查返回值
+    if (!m_pRenderTarget) return nullptr;
+
     auto it = m_brushCache.find(color);
     if (it != m_brushCache.end())
     {
@@ -90,11 +121,12 @@ ID2D1SolidColorBrush* Engine3D::GetBrush(COLORREF color)
         D2D1::ColorF(r, g, b),
         &brush
     );
-    if (SUCCEEDED(hr))
+    if (SUCCEEDED(hr) && brush)
     {
         m_brushCache[color] = brush;
         return brush;
     }
+    // 创建失败返回 nullptr
     return nullptr;
 }
 
@@ -158,11 +190,15 @@ void Engine3D::DrawTriangle(triangle3D tri, short transparency, int color)
     }
 }
 
-void Engine3D::DrawMesh3D(mesh3D& Centered)
+void Engine3D::DrawMesh3D(mesh3D& Centered, float fElapsedTime)
 {
     // 原有的旋转逻辑保持不变（略，和原来一样）
     // ...
     // 注意：原代码中直接修改了 Centered.tris 的点坐标，这里维持原逻辑
+
+    static double angle = 0;
+    angle = fElapsedTime * 1.57;
+
     for (int i = 0; i < Centered.tris.size(); i++)
     {
         for (int j = 0; j < 3; j++)
@@ -171,7 +207,7 @@ void Engine3D::DrawMesh3D(mesh3D& Centered)
             double zspin = Centered.tris[i].point[j].z;
             double r = sqrt(xspin * xspin + zspin * zspin);
             double theta = atan2(zspin, xspin);
-            theta = theta + 0.05 / 3.141592535;
+            theta = theta + angle;
             zspin = r * sin(theta);
             xspin = r * cos(theta);
             Centered.tris[i].point[j].x = xspin;
@@ -190,7 +226,12 @@ void Engine3D::DrawMesh3D(mesh3D& Centered)
             Projected.tris[i].point[j].x = 1.5 * unit * xspin * distance / (distance + zspin) + ScreenWidth() / 2.0;
             Projected.tris[i].point[j].y = 1.5 * unit * Projected.tris[i].point[j].y * distance / (distance + zspin) + ScreenHeight() / 2.0;
         }
-        DrawTriangle(Projected.tris[i], 128, RGB(0, 0, 0));
+        double NormalValue = (Projected.tris[i].point[1].x - Projected.tris[i].point[0].x) * (Projected.tris[i].point[2].y - Projected.tris[i].point[0].y) - (Projected.tris[i].point[1].y - Projected.tris[i].point[0].y) * (Projected.tris[i].point[2].x - Projected.tris[i].point[0].x);
+   
+        if (NormalValue < 0)
+        {
+            DrawTriangle(Projected.tris[i], 128, RGB(0, 0, 0));
+        }
     }
 }
 
@@ -199,7 +240,7 @@ mesh3D Engine3D::MoveToCenter(mesh3D mesh)
     double cx = 0, cy = 0, cz = 0;
     std::set<vector3D> allpoints;
 
-    for (triangle3D tri : mesh.tris)
+    for (const triangle3D& tri : mesh.tris)
     {
         for (int i = 0; i < 3; i++)
         {
@@ -207,18 +248,24 @@ mesh3D Engine3D::MoveToCenter(mesh3D mesh)
         }
     }
 
-    for (vector3D point : allpoints)
+    if (allpoints.empty())
+    {
+        // 无顶点，直接返回原始网格（避免除以0）
+        return mesh;
+    }
+
+    for (const vector3D& point : allpoints)
     {
         cx += point.x;
         cy += point.y;
         cz += point.z;
     }
 
-    cx /= allpoints.size();
-    cy /= allpoints.size();
-    cz /= allpoints.size();
+    cx /= static_cast<double>(allpoints.size());
+    cy /= static_cast<double>(allpoints.size());
+    cz /= static_cast<double>(allpoints.size());
 
-    for (int i = 0; i < mesh.tris.size(); i++)
+    for (size_t i = 0; i < mesh.tris.size(); i++)
     {
         for (int j = 0; j < 3; j++)
         {
@@ -233,47 +280,84 @@ mesh3D Engine3D::MoveToCenter(mesh3D mesh)
 
 bool Engine3D::OnUserCreate()
 {
-    //test objects
-    meshTetrahedron.tris = { { {{0,0,0}, {1,0,0}, {0,1,0}} } };
-
-    Centered1 = MoveToCenter(meshTetrahedron);
-
-    meshCube.tris = {
-        // 面 x = 0（左侧面）
-        { {{0, 0, 0}, {0, 5, 0}, {0, 5, 5}} },
-        { {{0, 0, 0}, {0, 5, 5}, {0, 0, 5}} },
-
-        // 面 x = 5（右侧面）
-        { {{5, 0, 0}, {5, 5, 0}, {5, 5, 5}} },
-        { {{5, 0, 0}, {5, 5, 5}, {5, 0, 5}} },
-
-        // 面 y = 0（前面）
-        { {{0, 0, 0}, {5, 0, 0}, {5, 0, 5}} },
-        { {{0, 0, 0}, {5, 0, 5}, {0, 0, 5}} },
-
-        // 面 y = 5（后面）
-        { {{0, 5, 0}, {5, 5, 0}, {5, 5, 5}} },
-        { {{0, 5, 0}, {5, 5, 5}, {0, 5, 5}} },
-
-        // 面 z = 0（底面）
-        { {{0, 0, 0}, {5, 0, 0}, {5, 5, 0}} },
-        { {{0, 0, 0}, {5, 5, 0}, {0, 5, 0}} },
-
-        // 面 z = 5（顶面）
-        { {{0, 0, 5}, {5, 0, 5}, {5, 5, 5}} },
-        { {{0, 0, 5}, {5, 5, 5}, {0, 5, 5}} }
-    };
-
-    Centered2 = MoveToCenter(meshCube);
-
-    //read obj file
-    std::ifstream file("icosahedron.obj");
+    // read obj file
+    std::ifstream file("Old Teapot.obj");
     if (!file.is_open()) {
         std::cerr << "无法打开文件！" << std::endl;
-        return 1;
+        return false;
     }
+
     std::vector<vector3D> points;
-    //while()
+    char type;
+    while (file >> type)
+    {
+        if (type == 'g')
+        {
+            // 处理 g 类型（这里忽略）
+            std::string restOfLine;
+            std::getline(file, restOfLine);
+            continue;
+        }
+        else if (type == 'v')
+        {
+            vector3D point;
+            if (!(file >> point.x >> point.y >> point.z)) {
+                // 格式错误，跳出或忽略该行
+                break;
+            }
+			point.x *= 2; // 放大顶点坐标以适应显示
+			point.y *= 2;
+			point.z *= 2;
+            points.push_back(point);
+        }
+        else if (type == 'f')
+        {
+            // 以字符串读取三项，支持 "v" 或 "v/vt/vn" 格式
+            std::string a, b, c;
+            if (!(file >> a >> b >> c)) {
+                // 行格式不对，跳过
+                continue;
+            }
+            auto parseVertexIndex = [](const std::string& token)->int {
+                size_t pos = token.find('/');
+                std::string num = (pos == std::string::npos) ? token : token.substr(0, pos);
+                try {
+                    return std::stoi(num);
+                } catch (...) {
+                    return 0;
+                }
+            };
+
+            int idx[3];
+            idx[0] = parseVertexIndex(a);
+            idx[1] = parseVertexIndex(b);
+            idx[2] = parseVertexIndex(c);
+
+            // 验证索引有效性（OBJ 索引从 1 开始）
+            if (idx[0] <= 0 || idx[1] <= 0 || idx[2] <= 0) continue;
+            if (static_cast<size_t>(idx[0]) > points.size() || static_cast<size_t>(idx[1]) > points.size() || static_cast<size_t>(idx[2]) > points.size())
+            {
+                // 索引越界，跳过该面
+                continue;
+            }
+
+            triangle3D tri;
+            for (int i = 0; i < 3; ++i)
+            {
+                tri.point[i] = points[idx[i] - 1];
+            }
+            meshInput.tris.push_back(tri);
+        }
+        else
+        {
+            // 忽略未知行类型（例如 vn, vt 等）
+            std::string rest;
+            std::getline(file, rest);
+            continue;
+        }
+    }
+
+    CenteredInput = MoveToCenter(meshInput);
 
     return true;
 }
@@ -298,11 +382,31 @@ bool Engine3D::OnUserUpdate(float fElapsedTime)
     }
     unit = sqrt(ScreenHeight() * ScreenHeight() + ScreenWidth() * ScreenWidth()) / 16;
 
-    DrawMesh3D(Centered1);
-    DrawMesh3D(Centered2);
+	DrawMesh3D(CenteredInput, fElapsedTime);
 
-    //TEST
-    //test();
     return true;
+}
+
+void Engine3D::Render()
+{
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    float deltaTime = 0.016f;   // 默认值
+
+    if (!m_firstFrame)
+    {
+        deltaTime = (float)((now.QuadPart - m_lastTime.QuadPart) / (double)m_freq.QuadPart);
+        // 限制最大增量（比如 0.1 秒），防止调试断点导致跳跃太大
+        if (deltaTime > 0.1f) deltaTime = 0.016f;
+    }
+    else
+    {
+        m_firstFrame = false;
+    }
+    m_lastTime = now;
+
+    BeginDraw();
+    OnUserUpdate(deltaTime);
+    EndDraw();
 }
 

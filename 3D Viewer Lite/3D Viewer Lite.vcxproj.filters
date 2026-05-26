@@ -29,7 +29,7 @@
     <ClInclude Include="Engine3D.h">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="OutDependence.h">
+    <ClInclude Include="ExternalDependence.h">
       <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>

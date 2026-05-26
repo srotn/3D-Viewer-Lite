@@ -1,9 +1,5 @@
 ﻿#include "Engine3D.h"
 
-
-#define ture true
-
-
 Engine3D engine;  // 全局引擎对象
 
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
@@ -16,7 +12,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             return -1;
         }
         engine.OnUserCreate();
-        SetTimer(hwnd, 1, 5, NULL);  // 约200 FPS
+        ///SetTimer(hwnd, 1, 5, NULL);  // 约200 FPS
         return 0;
 
     case WM_SIZE:
@@ -26,27 +22,15 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         engine.Resize(width, height);
         return 0;
     }
-
-    case WM_TIMER:
-        InvalidateRect(hwnd, NULL, TRUE);
-        return 0;
-
     case WM_PAINT:
     {
         PAINTSTRUCT ps;
         BeginPaint(hwnd, &ps);
-        // 开始 Direct2D 绘制
-        engine.BeginDraw();
-        // 注意：OnUserUpdate 内部会调用 Fill、Drawline 等，
-        // 需要确保这些函数能访问到有效的渲染目标
-        engine.OnUserUpdate(0.005f);
-        engine.EndDraw();
         EndPaint(hwnd, &ps);
         return 0;
     }
 
     case WM_DESTROY:
-        KillTimer(hwnd, 1);
         PostQuitMessage(0);
         return 0;
     }
@@ -73,10 +57,22 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     UpdateWindow(hwnd);
 
     MSG msg = {};
-    while (GetMessage(&msg, NULL, 0, 0))
+    while (true)
     {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
+        // 处理所有等待的消息（非阻塞）
+        while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
+        {
+            if (msg.message == WM_QUIT)
+            {
+                // 返回最终退出代码
+                return (int)msg.wParam;
+            }
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
+
+        // 所有消息处理完毕后，立即渲染一帧（无上限帧率）
+        engine.Render();
     }
     return msg.wParam;
 }

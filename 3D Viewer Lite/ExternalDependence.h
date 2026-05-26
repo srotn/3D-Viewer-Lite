@@ -1,4 +1,5 @@
 ﻿#pragma once
+#include "Structs.h"
 #include <cmath>
 #include <d2d1.h>
 #include <fstream>
