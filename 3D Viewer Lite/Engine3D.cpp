@@ -82,7 +82,6 @@ ID2D1SolidColorBrush* Engine3D::GetBrush(COLORREF color)
         return it->second;
     }
 
-    // 转换 COLORREF 到 D2D1_COLOR_F
     float r = GetRValue(color) / 255.0f;
     float g = GetGValue(color) / 255.0f;
     float b = GetBValue(color) / 255.0f;
