@@ -39,7 +39,7 @@ public:
 
 	mesh3D MoveToCenter(mesh3D mesh);
 
-	void Render();   // 新增：直接执行一帧渲染
+	void Render();
 
 	void UpdateYawAndPitch(int x, int y);
 
@@ -49,7 +49,7 @@ public:
 
 	
 	char name[256] = "Old Teapot.obj";
-	//char name[256] = "icosahedron.obj";
+	//char name[256] = "Axis.obj";
 	double fov = 60;
 	double zoom = 1;
 	vector3D Rlight = { -1, 1, 1 };

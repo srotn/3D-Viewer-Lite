@@ -158,12 +158,89 @@ void Engine3D::Fill(int lux, int luy, int rdx, int rdy, short transparency, uint
 
 void Engine3D::Fill(triangle3D tri, short transparency, uint32_t color)
 {
-    //color mixing
+    // 颜色混合
     uint32_t alpha = static_cast<uint32_t>(transparency) & 0xFF;
     uint32_t target = (alpha << 24) | (color & 0x00FFFFFF);
 
+    vector3D p0 = tri.point[0];
+    vector3D p1 = tri.point[1];
+    vector3D p2 = tri.point[2];
 
-    
+    if (p0.y > p1.y) std::swap(p0, p1);
+    if (p0.y > p2.y) std::swap(p0, p2);
+    if (p1.y > p2.y) std::swap(p1, p2);
+
+    if (static_cast<int>(p0.y) == static_cast<int>(p2.y)) return;
+
+
+    auto drawFlatBottom = [&](const vector3D& top, const vector3D& bot1, const vector3D& bot2) {
+        double invslope1 = (bot1.y != top.y) ? (bot1.x - top.x) / (bot1.y - top.y) : 0;
+        double invslope2 = (bot2.y != top.y) ? (bot2.x - top.x) / (bot2.y - top.y) : 0;
+
+        // 【修正 2】使用 ceil 规范化 Y 轴边界：寻找第一个在其下方的整数行
+        int start_y = (std::max)(0, static_cast<int>(std::ceil(top.y)));
+        int end_y = (std::min)(m_height - 1, static_cast<int>(std::ceil(bot1.y)) - 1);
+
+        for (int y = start_y; y <= end_y; y++) {
+            double curr_dy = static_cast<double>(y) - top.y;
+            double x1 = top.x + curr_dy * invslope1;
+            double x2 = top.x + curr_dy * invslope2;
+
+            if (x1 > x2) std::swap(x1, x2);
+
+            int start_x = (std::max)(0, static_cast<int>(x1));
+            int end_x = (std::min)(m_width - 1, static_cast<int>(x2));
+
+            int scanline_offset = y * m_width;
+            for (int x = start_x; x <= end_x; x++) {
+                m_frameBuffer[scanline_offset + x] = target;
+            }
+        }
+        };
+
+    auto drawFlatTop = [&](const vector3D& top1, const vector3D& top2, const vector3D& bot) {
+        double invslope1 = (bot.y != top1.y) ? (bot.x - top1.x) / (bot.y - top1.y) : 0;
+        double invslope2 = (bot.y != top2.y) ? (bot.x - top2.x) / (bot.y - top2.y) : 0;
+
+        // 【修正 2】使用 ceil 规范化平顶三角形的起始 Y 轴
+        int start_y = (std::max)(0, static_cast<int>(std::ceil((std::max)(top1.y, top2.y))));
+        int end_y = (std::min)(m_height - 1, static_cast<int>(std::ceil(bot.y)) - 1);
+
+        for (int y = start_y; y <= end_y; y++) {
+            // 【修正 1】各自使用属于自己的 top.y 算步长，拒绝浮点数微小偏差造成的 X 轴歪斜
+            double curr_dy1 = static_cast<double>(y) - top1.y;
+            double curr_dy2 = static_cast<double>(y) - top2.y;
+            double x1 = top1.x + curr_dy1 * invslope1;
+            double x2 = top2.x + curr_dy2 * invslope2;
+
+            if (x1 > x2) std::swap(x1, x2);
+
+            int start_x = (std::max)(0, static_cast<int>(x1));
+            int end_x = (std::min)(m_width - 1, static_cast<int>(x2));
+
+            int scanline_offset = y * m_width;
+            for (int x = start_x; x <= end_x; x++) {
+                m_frameBuffer[scanline_offset + x] = target;
+            }
+        }
+        };
+
+    if (static_cast<int>(p1.y) == static_cast<int>(p2.y)) {
+        drawFlatBottom(p0, p1, p2);
+    }
+    else if (static_cast<int>(p0.y) == static_cast<int>(p1.y)) {
+        drawFlatTop(p0, p1, p2);
+    }
+    else {
+        // 通用三角形逻辑
+        double weight = (p1.y - p0.y) / (p2.y - p0.y);
+        double split_x = p0.x + weight * (p2.x - p0.x);
+
+        vector3D p_split = { split_x, p1.y, p0.z + weight * (p2.z - p0.z) };
+
+        drawFlatBottom(p0, p1, p_split);
+        drawFlatTop(p1, p_split, p2);
+    }
 }
 
 void Engine3D::Drawline(int x1, int y1, int x2, int y2, short transparency, uint32_t color)
@@ -407,7 +484,7 @@ void Engine3D::DrawMesh3D(const mesh3D& Centered, float fElapsedTime)
         vector3D ViewVector = { px, py, pz + distance };
 
         double NormalValue = NormalVector.dot(ViewVector);
-        if (NormalValue < 0)
+        if (NormalValue > 0)
         {
             continue;
         }
@@ -426,41 +503,34 @@ void Engine3D::DrawMesh3D(const mesh3D& Centered, float fElapsedTime)
             tri.point[j].x = 1.5 * unit * x * distance / (distance + z) + ScreenWidth() / 2.0;
             tri.point[j].y = 1.5 * unit * y * distance / (distance + z) + ScreenHeight() / 2.0;
         }
-        //PreProcessed.tris.push_back(tri);
-    //}
 
-    //2 sorting by depth (Painter's algorithm)
-    /*std::vector<std::pair<double, size_t>> depthIndices;
-    depthIndices.reserve(PreProcessed.tris.size());
+        //2 sorting by depth (Painter's algorithm)
+        /*std::vector<std::pair<double, size_t>> depthIndices;
+        depthIndices.reserve(PreProcessed.tris.size());
 
-    for (size_t i = 0; i < PreProcessed.tris.size(); i++)
-    {
-        double aDepth = (PreProcessed.tris[i].point[0].z + PreProcessed.tris[i].point[1].z + PreProcessed.tris[i].point[2].z) / 3.0;
-        depthIndices.push_back({ aDepth, i });
-    }
+        for (size_t i = 0; i < PreProcessed.tris.size(); i++)
+        {
+            double aDepth = (PreProcessed.tris[i].point[0].z + PreProcessed.tris[i].point[1].z + PreProcessed.tris[i].point[2].z) / 3.0;
+            depthIndices.push_back({ aDepth, i });
+        }
 
-    std::sort(depthIndices.begin(), depthIndices.end(), [](const auto& a, const auto& b) {
-        return a.first > b.first;
-        });*/
+        std::sort(depthIndices.begin(), depthIndices.end(), [](const auto& a, const auto& b) {
+            return a.first > b.first;
+            });*/
 
-    //3 fill & lighting
-    /*for (int i = 0; i < depthIndices.size(); i++)
-    {*/
-        /*size_t idx = depthIndices[i].second;
-        const auto& tri = PreProcessed.tris[idx];*/
+        //3 fill & lighting
 
-        /*double R_Intensity = 256 * tri.NormalVector.dot(Rlight.normalize());
+        double R_Intensity = 256 * tri.NormalVector.dot(Rlight.normalize());
         double G_Intensity = 256 * tri.NormalVector.dot(Glight.normalize());
         double B_Intensity = 256 * tri.NormalVector.dot(Blight.normalize());
 
         if (R_Intensity < 0) R_Intensity = 0;
         if (G_Intensity < 0) G_Intensity = 0;
-        if (B_Intensity < 0) B_Intensity = 0;*/
-
-        //Fill(tri, 128, RGB(R_Intensity, G_Intensity, B_Intensity));
+        if (B_Intensity < 0) B_Intensity = 0;
+        Fill(tri, 128, RGB(B_Intensity / 2, G_Intensity / 2, R_Intensity / 2));
 
         //4 draw wireframe
-        DrawTriangle(tri, 256, 0x00ffffff);
+        //DrawTriangle(tri, 128, 0x00ff0000);
     }
 }
 
