@@ -33,15 +33,27 @@ public:
 
 	void DrawTriangle(triangle3D tri, short transparency, int color);
 
-	void DrawMesh3D(mesh3D& Centered, float fElapsedTime);
+	void DrawMesh3D(mesh3D Centered, float fElapsedTime);
 
 	mesh3D MoveToCenter(mesh3D mesh);
 
 	void Render();   // 新增：直接执行一帧渲染
+
+	void UpdateYawAndPitch(int x, int y);
+
+	void CreateRotationMatrix(double yaw, double pitch);
+
+	vector3D MtimesV(matrix m, vector3D v);
 	
 	double fov = 60;
 	double distance;
 	double unit;
+	double yaw;
+	double pitch;
+
+	matrix RotationYaw;
+	matrix RotationPitch;
+	matrix Projection;
 
 private:
 
@@ -56,7 +68,6 @@ private:
 	ID2D1SolidColorBrush* GetBrush(COLORREF color);
 
 	mesh3D meshInput;
-	mesh3D CenteredInput;
 	
 	int m_width = 0, m_height = 0;
 	HWND m_hwnd = nullptr;

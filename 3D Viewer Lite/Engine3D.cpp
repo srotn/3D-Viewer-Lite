@@ -190,50 +190,36 @@ void Engine3D::DrawTriangle(triangle3D tri, short transparency, int color)
     }
 }
 
-void Engine3D::DrawMesh3D(mesh3D& Centered, float fElapsedTime)
+void Engine3D::DrawMesh3D(mesh3D Centered, float fElapsedTime)
 {
-    // 原有的旋转逻辑保持不变（略，和原来一样）
-    // ...
-    // 注意：原代码中直接修改了 Centered.tris 的点坐标，这里维持原逻辑
+    mesh3D Projected = Centered;
 
-    static double angle = 0;
-    angle = fElapsedTime * 1.57;
-
+	//process every triangle
     for (int i = 0; i < Centered.tris.size(); i++)
     {
         for (int j = 0; j < 3; j++)
         {
-            double xspin = Centered.tris[i].point[j].x;
-            double zspin = Centered.tris[i].point[j].z;
-            double r = sqrt(xspin * xspin + zspin * zspin);
-            double theta = atan2(zspin, xspin);
-            theta = theta + angle;
-            zspin = r * sin(theta);
-            xspin = r * cos(theta);
-            Centered.tris[i].point[j].x = xspin;
-            Centered.tris[i].point[j].z = zspin;
-        }
-    }
-
-    mesh3D Projected = Centered;
-    for (int i = 0; i < Projected.tris.size(); i++)
-    {
-        for (int j = 0; j < 3; j++)
-        {
-            double xspin = Centered.tris[i].point[j].x;
-            double zspin = Centered.tris[i].point[j].z;
-            zspin = zspin += 2 * distance;
-            Projected.tris[i].point[j].x = 1.5 * unit * xspin * distance / (distance + zspin) + ScreenWidth() / 2.0;
-            Projected.tris[i].point[j].y = 1.5 * unit * Projected.tris[i].point[j].y * distance / (distance + zspin) + ScreenHeight() / 2.0;
+            //step1 rotation
+			Projected.tris[i].point[j] = MtimesV(RotationYaw, Projected.tris[i].point[j]);
+            Projected.tris[i].point[j] = MtimesV(RotationPitch, Projected.tris[i].point[j]);
+            
+			//step2 projection
+			double x = Projected.tris[i].point[j].x;
+			double y = Projected.tris[i].point[j].y;
+            double z = Projected.tris[i].point[j].z;
+            Projected.tris[i].point[j].z += 2 * distance;
+            Projected.tris[i].point[j].x = 1.5 * unit * x * distance / (distance + z) + ScreenWidth() / 2.0;
+            Projected.tris[i].point[j].y = 1.5 * unit * y * distance / (distance + z) + ScreenHeight() / 2.0;
         }
         double NormalValue = (Projected.tris[i].point[1].x - Projected.tris[i].point[0].x) * (Projected.tris[i].point[2].y - Projected.tris[i].point[0].y) - (Projected.tris[i].point[1].y - Projected.tris[i].point[0].y) * (Projected.tris[i].point[2].x - Projected.tris[i].point[0].x);
-   
+        
+		//step3 backface culling
         if (NormalValue < 0)
         {
             DrawTriangle(Projected.tris[i], 128, RGB(0, 0, 0));
         }
 
-        //lighting
+        //step4 lighting
         double NormalVector[3] = {
             (Projected.tris[i].point[1].y - Projected.tris[i].point[0].y) * (Projected.tris[i].point[2].z - Projected.tris[i].point[0].z) - (Projected.tris[i].point[1].z - Projected.tris[i].point[0].z) * (Projected.tris[i].point[2].y - Projected.tris[i].point[0].y),
             (Projected.tris[i].point[1].z - Projected.tris[i].point[0].z) * (Projected.tris[i].point[2].x - Projected.tris[i].point[0].x) - (Projected.tris[i].point[1].x - Projected.tris[i].point[0].x) * (Projected.tris[i].point[2].z - Projected.tris[i].point[0].z),
@@ -312,9 +298,9 @@ bool Engine3D::OnUserCreate()
                 // 格式错误，跳出或忽略该行
                 break;
             }
-			point.x *= 2; // 放大顶点坐标以适应显示
-			point.y *= 2;
-			point.z *= 2;
+			point.x *= 1; // 放大顶点坐标以适应显示
+			point.y *= 1;
+			point.z *= 1;
             points.push_back(point);
         }
         else if (type == 'f')
@@ -364,7 +350,7 @@ bool Engine3D::OnUserCreate()
         }
     }
 
-    CenteredInput = MoveToCenter(meshInput);
+    meshInput = MoveToCenter(meshInput);
 
     return true;
 }
@@ -374,7 +360,7 @@ bool Engine3D::OnUserUpdate(float fElapsedTime)
     //WORK
     Fill(255, 0x404040);
 
-
+	CreateRotationMatrix(yaw, pitch);
     double fov_rad = fov * 3.1415926535 / 180.0;
     if (fov <= 0.0)
     {
@@ -389,7 +375,7 @@ bool Engine3D::OnUserUpdate(float fElapsedTime)
     }
     unit = sqrt(ScreenHeight() * ScreenHeight() + ScreenWidth() * ScreenWidth()) / 16;
 
-	DrawMesh3D(CenteredInput, fElapsedTime);
+	DrawMesh3D(meshInput, fElapsedTime);
 
     return true;
 }
@@ -417,3 +403,45 @@ void Engine3D::Render()
     EndDraw();
 }
 
+void Engine3D::UpdateYawAndPitch(int delta_x, int delta_y)
+{
+    yaw += static_cast<double>(delta_x) / static_cast<double>(400) * 3.1415926;
+    pitch -= static_cast<double>(delta_y) / static_cast<double>(400) * 3.1415926;
+	// 限制 pitch 在 -90 到 +90 度之间
+    if (pitch >= 3.14159 / 2) pitch = 3.14159 / 2;
+    if (pitch <= -3.14159 / 2) pitch = -3.14159 / 2;
+}
+
+void Engine3D::CreateRotationMatrix(double yaw, double pitch)
+{
+    matrix rotation;
+    double cosYaw = cos(yaw);
+    double sinYaw = sin(yaw);
+    double cosPitch = cos(pitch);
+    double sinPitch = sin(pitch);
+    RotationYaw = {
+        {
+        { cosYaw, 0, sinYaw, 0 },
+        { 0, 1, 0, 0 },
+        { -sinYaw, 0, cosYaw, 0 },
+        { 0, 0, 0, 1 }
+        }
+    };
+    RotationPitch = {
+        {
+        { 1, 0, 0, 0 },
+        { 0, cosPitch, -sinPitch, 0 },
+        { 0, sinPitch, cosPitch, 0 },
+        { 0, 0, 0, 1 }
+        }
+	};
+}
+
+vector3D Engine3D::MtimesV(matrix m, vector3D v)
+{
+    vector3D result;
+    result.x = m.m[0][0] * v.x + m.m[0][1] * v.y + m.m[0][2] * v.z + m.m[0][3];
+    result.y = m.m[1][0] * v.x + m.m[1][1] * v.y + m.m[1][2] * v.z + m.m[1][3];
+    result.z = m.m[2][0] * v.x + m.m[2][1] * v.y + m.m[2][2] * v.z + m.m[2][3];
+    return result;
+}

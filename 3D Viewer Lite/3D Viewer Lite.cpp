@@ -2,6 +2,9 @@
 
 Engine3D engine;  // 全局引擎对象
 
+int mouse_x;
+int mouse_y;
+
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     switch (uMsg)
@@ -12,7 +15,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             return -1;
         }
         engine.OnUserCreate();
-        ///SetTimer(hwnd, 1, 5, NULL);  // 约200 FPS
         return 0;
 
     case WM_SIZE:
@@ -33,12 +35,24 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
     case WM_DESTROY:
         PostQuitMessage(0);
         return 0;
+
+    case WM_MOUSEMOVE:
+        bool leftButtonDown = (wParam & MK_LBUTTON) != 0;
+
+        if (leftButtonDown)
+        {
+            engine.UpdateYawAndPitch(LOWORD(lParam) - mouse_x, HIWORD(lParam) - mouse_y);
+        }
+
+        mouse_x = LOWORD(lParam);
+        mouse_y = HIWORD(lParam);
+
+        return 0;
     }
     return DefWindowProc(hwnd, uMsg, wParam, lParam);
 }
 
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
-{
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow){
     // 窗口注册与创建（不变）
     const wchar_t CLASS_NAME[] = L"3DViewerWindow";
     WNDCLASS wc = {};
