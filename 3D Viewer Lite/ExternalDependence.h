@@ -4,6 +4,7 @@
 #include <d2d1.h>
 #include <fstream>
 #include <string>
+#include <sstream>
 #include <set>
 #include <iostream>
 #include <windows.h>

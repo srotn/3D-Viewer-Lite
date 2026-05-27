@@ -44,8 +44,11 @@ public:
 	void CreateRotationMatrix(double yaw, double pitch);
 
 	vector3D MtimesV(matrix m, vector3D v);
+
+	mesh3D LoadFromObjectFile(std::string filename);
+
 	
-	char name[256] = "icosahedron.obj";
+	char name[256] = "Old Teapot.obj";
 	double fov = 60;
 	double zoom = 1;
 	vector3D Rlight = { -1, 1, 1 };

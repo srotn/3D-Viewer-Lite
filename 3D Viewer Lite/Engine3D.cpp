@@ -233,6 +233,7 @@ void Engine3D::DrawMesh3D(mesh3D Centered, float fElapsedTime)
 {
     mesh3D Projected = Centered;
     mesh3D PreProcessed = {};
+    PreProcessed.tris.reserve(Centered.tris.size());
 
 	//1 preprocessing: rotation, backface culling, projection
     for (int i = 0; i < Centered.tris.size(); i++)
@@ -285,30 +286,37 @@ void Engine3D::DrawMesh3D(mesh3D Centered, float fElapsedTime)
     }
 
 	//2 sorting by depth (Painter's algorithm)
-    std::sort(PreProcessed.tris.begin(), PreProcessed.tris.end(), [](const triangle3D& a, const triangle3D& b) {
-        double aDepth = (a.point[0].z + a.point[1].z + a.point[2].z) / 3.0;
-        double bDepth = (b.point[0].z + b.point[1].z + b.point[2].z) / 3.0;
-        return aDepth > bDepth;
+    std::vector<std::pair<double, size_t>> depthIndices;
+    depthIndices.reserve(PreProcessed.tris.size());
+
+    for (size_t i = 0; i < PreProcessed.tris.size(); i++)
+    {
+        double aDepth = (PreProcessed.tris[i].point[0].z + PreProcessed.tris[i].point[1].z + PreProcessed.tris[i].point[2].z) / 3.0;
+        depthIndices.push_back({ aDepth, i });
+    }
+
+    std::sort(depthIndices.begin(), depthIndices.end(), [](const auto& a, const auto& b) {
+        return a.first > b.first;
         });
 
     //3 fill & lighting
-	for (int i = 0; i < PreProcessed.tris.size(); i++) 
+	for (int i = 0; i < depthIndices.size(); i++)
     {
-        double R_Intensity = 256 * PreProcessed.tris[i].NormalVector.dot(Rlight.normalize());
-        double G_Intensity = 256 * PreProcessed.tris[i].NormalVector.dot(Glight.normalize());
-        double B_Intensity = 256 * PreProcessed.tris[i].NormalVector.dot(Blight.normalize());
+        size_t idx = depthIndices[i].second;
+        const auto& tri = PreProcessed.tris[idx];
+
+        double R_Intensity = 256 * tri.NormalVector.dot(Rlight.normalize());
+        double G_Intensity = 256 * tri.NormalVector.dot(Glight.normalize());
+        double B_Intensity = 256 * tri.NormalVector.dot(Blight.normalize());
 
 		if (R_Intensity < 0) R_Intensity = 0;
         if (G_Intensity < 0) G_Intensity = 0;
         if (B_Intensity < 0) B_Intensity = 0;
 
-        Fill(PreProcessed.tris[i], 128, RGB(R_Intensity, G_Intensity, B_Intensity));
-    }
-
-    //4 draw wireframe
-    for (int i = 0; i < PreProcessed.tris.size(); i++)
-    {
-        DrawTriangle(PreProcessed.tris[i], 128, RGB(50, 50, 50));
+        Fill(tri, 128, RGB(R_Intensity, G_Intensity, B_Intensity));
+        
+        //4 draw wireframe
+        DrawTriangle(tri, 128, RGB(50, 50, 50));
     }
 }
 
@@ -358,78 +366,7 @@ mesh3D Engine3D::MoveToCenter(mesh3D mesh)
 bool Engine3D::OnUserCreate()
 {
     // read obj file
-    std::ifstream file(name);
-    if (!file.is_open()) {
-        std::cerr << "无法打开文件！" << std::endl;
-        return false;
-    }
-
-    std::vector<vector3D> points;
-    char type;
-    while (file >> type)
-    {
-        if (type == 'g')
-        {
-            // 处理 g 类型（这里忽略）
-            std::string restOfLine;
-            std::getline(file, restOfLine);
-            continue;
-        }
-        else if (type == 'v')
-        {
-            vector3D point;
-            if (!(file >> point.x >> point.y >> point.z)) {
-                // 格式错误，跳出或忽略该行
-                break;
-            }
-            points.push_back(point);
-        }
-        else if (type == 'f')
-        {
-            // 以字符串读取三项，支持 "v" 或 "v/vt/vn" 格式
-            std::string a, b, c;
-            if (!(file >> a >> b >> c)) {
-                // 行格式不对，跳过
-                continue;
-            }
-            auto parseVertexIndex = [](const std::string& token)->int {
-                size_t pos = token.find('/');
-                std::string num = (pos == std::string::npos) ? token : token.substr(0, pos);
-                try {
-                    return std::stoi(num);
-                } catch (...) {
-                    return 0;
-                }
-            };
-
-            int idx[3];
-            idx[0] = parseVertexIndex(a);
-            idx[1] = parseVertexIndex(b);
-            idx[2] = parseVertexIndex(c);
-
-            // 验证索引有效性（OBJ 索引从 1 开始）
-            if (idx[0] <= 0 || idx[1] <= 0 || idx[2] <= 0) continue;
-            if (static_cast<size_t>(idx[0]) > points.size() || static_cast<size_t>(idx[1]) > points.size() || static_cast<size_t>(idx[2]) > points.size())
-            {
-                // 索引越界，跳过该面
-                continue;
-            }
-
-            triangle3D tri;
-            for (int i = 0; i < 3; ++i)
-            {
-                tri.point[i] = points[idx[i] - 1];
-            }
-            meshInput.tris.push_back(tri);
-        }
-        else
-        {
-            // 忽略未知行类型（例如 vn, vt 等）
-            std::string rest;
-            std::getline(file, rest);
-            continue;
-        }
-    }
+	meshInput = LoadFromObjectFile(name);
 
     meshInput = MoveToCenter(meshInput);
 
@@ -525,4 +462,62 @@ vector3D Engine3D::MtimesV(matrix m, vector3D v)
     result.y = m.m[1][0] * v.x + m.m[1][1] * v.y + m.m[1][2] * v.z + m.m[1][3];
     result.z = m.m[2][0] * v.x + m.m[2][1] * v.y + m.m[2][2] * v.z + m.m[2][3];
     return result;
+}
+
+mesh3D Engine3D::LoadFromObjectFile(std::string filename) 
+{
+    std::ifstream f(filename);
+    mesh3D mesh;
+    std::vector<vector3D> verts; // 暂存所有顶点
+
+    std::string line;
+    while (std::getline(f, line)) 
+    {
+        std::string junk;
+        if (line.empty() || line[0] == '#') continue;
+
+        if (line[0] == 'v' && line[1] == ' ') 
+        { // 读取顶点
+            std::stringstream ss(line);
+            vector3D v;
+            ss >> junk >> v.x >> v.y >> v.z;
+            verts.push_back(v);
+        }
+        else if (line[0] == 'f' && line[1] == ' ') 
+        { // 读取面索引
+            std::stringstream ss(line);
+            std::vector<std::string> face(4);
+			face[3] = ""; // 确保第四个元素存在，避免越界
+            ss >> junk >> face[0] >> face[1] >> face[2] >> face[3];
+           
+            int v[4] = {0};
+            int vt[4] = {0};
+			int vn[4] = {0};
+
+            for(int i = 0; i < 4; i++) 
+            {
+                if (!face[i].empty()) 
+                {
+                    int j = 0;
+                    while (face[i][j])
+                    {
+                        if (face[i][j] == '/') 
+                        {
+                            face[i][j] = ' '; 
+                        }
+						j++;
+                    }
+                }
+			}
+            for (int i = 0; i < 4; i++)
+            {
+                std::stringstream block(face[i]);
+                block >> v[i] >> vt[i] >> vn[i];
+            }
+            // OBJ是从1开始索引的，C++ vector是从0开始的，所以要 -1
+            mesh.tris.push_back({ verts[v[0] - 1], verts[v[1] - 1], verts[v[2] - 1] });
+            if (v[3] != 0) mesh.tris.push_back({ verts[v[0] - 1], verts[v[2] - 1], verts[v[3] - 1] });
+        }
+    }
+    return mesh;
 }
