@@ -219,8 +219,8 @@ void Engine3D::Drawline(int x1, int y1, int x2, int y2, short transparency, uint
             }
         }
     }
-    {
-        // 4. 左上, X主导
+    // 4. 左上, X主导
+    { 
         int y_1 = y1;
         if (x1 > x2 && y2 < y1 && (x1 - x2) >= (y1 - y2))
         {
@@ -235,8 +235,8 @@ void Engine3D::Drawline(int x1, int y1, int x2, int y2, short transparency, uint
             }
         }
     }
+    // 5. 右下, Y主导
     {
-        // 5. 右下, Y主导
         int x_1 = x1;
         if (x1 < x2 && y2 > y1 && (y2 - y1) > (x2 - x1))
         {
@@ -251,8 +251,8 @@ void Engine3D::Drawline(int x1, int y1, int x2, int y2, short transparency, uint
             }
         }
     }
+    // 6. 右上, Y主导
     {
-        // 6. 右上, Y主导
         int x_1 = x1;
         if (x1 < x2 && y2 < y1 && (y1 - y2) >(x2 - x1))
         {
@@ -267,8 +267,8 @@ void Engine3D::Drawline(int x1, int y1, int x2, int y2, short transparency, uint
             }
         }
     }
+    // 7. 左下, Y主导
     {
-        // 7. 左下, Y主导
         int x_1 = x1;
         if (x1 > x2 && y2 > y1 && (y2 - y1) > (x1 - x2))
         {
@@ -283,8 +283,8 @@ void Engine3D::Drawline(int x1, int y1, int x2, int y2, short transparency, uint
             }
         }
     }
+    // 8. 左上, Y主导
     {
-        // 8. 左上, Y主导
         int x_1 = x1;
         if (x1 > x2 && y2 < y1 && (y1 - y2) >(x1 - x2))
         {
@@ -299,8 +299,8 @@ void Engine3D::Drawline(int x1, int y1, int x2, int y2, short transparency, uint
             }
         }
     }
+    // 9. 纯水平向右 (包含起点终点重合的点)
     {
-        // 9. 纯水平向右 (包含起点终点重合的点)
         int y_1 = y1;
         if (y1 == y2 && x1 <= x2)
         {
@@ -314,8 +314,8 @@ void Engine3D::Drawline(int x1, int y1, int x2, int y2, short transparency, uint
             }
         }
     }
+    // 10. 纯水平向左
     {
-        // 10. 纯水平向左
         int y_1 = y1;
         if (y1 == y2 && x1 > x2)
         {
@@ -329,8 +329,8 @@ void Engine3D::Drawline(int x1, int y1, int x2, int y2, short transparency, uint
             }
         }
     }
+    // 11. 纯垂直向下
     {
-        // 11. 纯垂直向下
         int x_1 = x1;
         if (x1 == x2 && y1 < y2)
         {
@@ -344,8 +344,8 @@ void Engine3D::Drawline(int x1, int y1, int x2, int y2, short transparency, uint
             }
         }
     }
+    // 12. 纯垂直向上
     {
-        // 12. 纯垂直向上
         int x_1 = x1;
         if (x1 == x2 && y1 > y2)
         {
@@ -375,37 +375,35 @@ void Engine3D::DrawTriangle(triangle3D tri, short transparency, uint32_t color)
 }
 //----------------------------------------------------
 
-void Engine3D::DrawMesh3D(mesh3D Centered, float fElapsedTime)
+void Engine3D::DrawMesh3D(const mesh3D& Centered, float fElapsedTime)
 {
-    mesh3D Projected = Centered;
-    mesh3D PreProcessed = {};
-    PreProcessed.tris.reserve(Centered.tris.size());
 
-	//1 preprocessing: rotation, backface culling, projection
+    //1 preprocessing: rotation, backface culling, projection
     for (int i = 0; i < Centered.tris.size(); i++)
     {
+        triangle3D tri = Centered.tris[i];
         //step1 rotation
         for (int j = 0; j < 3; j++)
         {
 
-            Projected.tris[i].point[j] = MtimesV(RotationYaw, Projected.tris[i].point[j]);
-            Projected.tris[i].point[j] = MtimesV(RotationPitch, Projected.tris[i].point[j]);
-            Projected.tris[i].point[j].x *= zoom; // 放大顶点坐标以适应显示
-            Projected.tris[i].point[j].y *= zoom;
-            Projected.tris[i].point[j].z *= zoom;
+            tri.point[j] = MtimesV(RotationYaw, tri.point[j]);
+            tri.point[j] = MtimesV(RotationPitch, tri.point[j]);
+            tri.point[j].x *= zoom; // 放大顶点坐标以适应显示
+            tri.point[j].y *= zoom;
+            tri.point[j].z *= zoom;
         }
 
         //step2 backface culling
-        double px = Projected.tris[i].point[1].x;
-        double py = Projected.tris[i].point[1].y;
-        double pz = Projected.tris[i].point[1].z;
+        double px = tri.point[1].x;
+        double py = tri.point[1].y;
+        double pz = tri.point[1].z;
 
         vector3D NormalVector = {
-            (Projected.tris[i].point[1].y - Projected.tris[i].point[0].y) * (Projected.tris[i].point[2].z - Projected.tris[i].point[0].z) - (Projected.tris[i].point[1].z - Projected.tris[i].point[0].z) * (Projected.tris[i].point[2].y - Projected.tris[i].point[0].y),
-            (Projected.tris[i].point[1].z - Projected.tris[i].point[0].z) * (Projected.tris[i].point[2].x - Projected.tris[i].point[0].x) - (Projected.tris[i].point[1].x - Projected.tris[i].point[0].x) * (Projected.tris[i].point[2].z - Projected.tris[i].point[0].z),
-            (Projected.tris[i].point[1].x - Projected.tris[i].point[0].x) * (Projected.tris[i].point[2].y - Projected.tris[i].point[0].y) - (Projected.tris[i].point[1].y - Projected.tris[i].point[0].y) * (Projected.tris[i].point[2].x - Projected.tris[i].point[0].x)
+            (tri.point[1].y - tri.point[0].y) * (tri.point[2].z - tri.point[0].z) - (tri.point[1].z - tri.point[0].z) * (tri.point[2].y - tri.point[0].y),
+            (tri.point[1].z - tri.point[0].z) * (tri.point[2].x - tri.point[0].x) - (tri.point[1].x - tri.point[0].x) * (tri.point[2].z - tri.point[0].z),
+            (tri.point[1].x - tri.point[0].x) * (tri.point[2].y - tri.point[0].y) - (tri.point[1].y - tri.point[0].y) * (tri.point[2].x - tri.point[0].x)
         };
-		NormalVector = NormalVector.normalize();
+        NormalVector = NormalVector.normalize();
         vector3D ViewVector = { px, py, pz + distance };
 
         double NormalValue = NormalVector.dot(ViewVector);
@@ -414,25 +412,25 @@ void Engine3D::DrawMesh3D(mesh3D Centered, float fElapsedTime)
             continue;
         }
 
-		//store NormalVector and ViewVector for lighting calculation in the future
-        Projected.tris[i].NormalVector = NormalVector;
-        Projected.tris[i].ViewVector = ViewVector;
+        //store NormalVector and ViewVector for lighting calculation in the future
+        tri.NormalVector = NormalVector;
+        tri.ViewVector = ViewVector;
 
         //step3 projection
         for (int j = 0; j < 3; j++)
         {
 
-            double x = Projected.tris[i].point[j].x;
-            double y = Projected.tris[i].point[j].y;
-            double z = Projected.tris[i].point[j].z;
-            Projected.tris[i].point[j].x = 1.5 * unit * x * distance / (distance + z) + ScreenWidth() / 2.0;
-            Projected.tris[i].point[j].y = 1.5 * unit * y * distance / (distance + z) + ScreenHeight() / 2.0;
+            double x = tri.point[j].x;
+            double y = tri.point[j].y;
+            double z = tri.point[j].z;
+            tri.point[j].x = 1.5 * unit * x * distance / (distance + z) + ScreenWidth() / 2.0;
+            tri.point[j].y = 1.5 * unit * y * distance / (distance + z) + ScreenHeight() / 2.0;
         }
-		PreProcessed.tris.push_back(Projected.tris[i]);
-    }
+        //PreProcessed.tris.push_back(tri);
+    //}
 
-	//2 sorting by depth (Painter's algorithm)
-    std::vector<std::pair<double, size_t>> depthIndices;
+    //2 sorting by depth (Painter's algorithm)
+    /*std::vector<std::pair<double, size_t>> depthIndices;
     depthIndices.reserve(PreProcessed.tris.size());
 
     for (size_t i = 0; i < PreProcessed.tris.size(); i++)
@@ -443,24 +441,24 @@ void Engine3D::DrawMesh3D(mesh3D Centered, float fElapsedTime)
 
     std::sort(depthIndices.begin(), depthIndices.end(), [](const auto& a, const auto& b) {
         return a.first > b.first;
-        });
+        });*/
 
     //3 fill & lighting
-	for (int i = 0; i < depthIndices.size(); i++)
-    {
-        size_t idx = depthIndices[i].second;
-        const auto& tri = PreProcessed.tris[idx];
+    /*for (int i = 0; i < depthIndices.size(); i++)
+    {*/
+        /*size_t idx = depthIndices[i].second;
+        const auto& tri = PreProcessed.tris[idx];*/
 
-        double R_Intensity = 256 * tri.NormalVector.dot(Rlight.normalize());
+        /*double R_Intensity = 256 * tri.NormalVector.dot(Rlight.normalize());
         double G_Intensity = 256 * tri.NormalVector.dot(Glight.normalize());
         double B_Intensity = 256 * tri.NormalVector.dot(Blight.normalize());
 
-		if (R_Intensity < 0) R_Intensity = 0;
+        if (R_Intensity < 0) R_Intensity = 0;
         if (G_Intensity < 0) G_Intensity = 0;
-        if (B_Intensity < 0) B_Intensity = 0;
+        if (B_Intensity < 0) B_Intensity = 0;*/
 
         //Fill(tri, 128, RGB(R_Intensity, G_Intensity, B_Intensity));
-        
+
         //4 draw wireframe
         DrawTriangle(tri, 256, 0x00ffffff);
     }
@@ -599,15 +597,6 @@ void Engine3D::CreateRotationMatrix(double yaw, double pitch)
         { 0, 0, 0, 1 }
         }
 	};
-}
-
-vector3D Engine3D::MtimesV(matrix m, vector3D v)
-{
-    vector3D result;
-    result.x = m.m[0][0] * v.x + m.m[0][1] * v.y + m.m[0][2] * v.z + m.m[0][3];
-    result.y = m.m[1][0] * v.x + m.m[1][1] * v.y + m.m[1][2] * v.z + m.m[1][3];
-    result.z = m.m[2][0] * v.x + m.m[2][1] * v.y + m.m[2][2] * v.z + m.m[2][3];
-    return result;
 }
 
 mesh3D Engine3D::LoadFromObjectFile(std::string filename) 

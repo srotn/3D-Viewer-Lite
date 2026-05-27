@@ -33,7 +33,9 @@ public:
 
 	void DrawTriangle(triangle3D tri, short transparency, uint32_t color);
 
-	void DrawMesh3D(mesh3D Centered, float fElapsedTime);
+	void DrawMesh3D(const mesh3D& Projected, float fElapsedTime);
+
+	inline vector3D MtimesV(const matrix& m, const vector3D& v);
 
 	mesh3D MoveToCenter(mesh3D mesh);
 
@@ -43,12 +45,11 @@ public:
 
 	void CreateRotationMatrix(double yaw, double pitch);
 
-	vector3D MtimesV(matrix m, vector3D v);
-
 	mesh3D LoadFromObjectFile(std::string filename);
 
 	
 	char name[256] = "Old Teapot.obj";
+	//char name[256] = "icosahedron.obj";
 	double fov = 60;
 	double zoom = 1;
 	vector3D Rlight = { -1, 1, 1 };
@@ -90,3 +91,12 @@ private:
 	LARGE_INTEGER m_freq;
 	bool m_firstFrame;
 };
+
+inline vector3D Engine3D::MtimesV(const matrix& m, const vector3D& v)
+{
+	vector3D result;
+	result.x = m.m[0][0] * v.x + m.m[0][1] * v.y + m.m[0][2] * v.z + m.m[0][3];
+	result.y = m.m[1][0] * v.x + m.m[1][1] * v.y + m.m[1][2] * v.z + m.m[1][3];
+	result.z = m.m[2][0] * v.x + m.m[2][1] * v.y + m.m[2][2] * v.z + m.m[2][3];
+	return result;
+}
