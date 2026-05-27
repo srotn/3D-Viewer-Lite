@@ -197,34 +197,49 @@ void Engine3D::DrawMesh3D(mesh3D Centered, float fElapsedTime)
 	//process every triangle
     for (int i = 0; i < Centered.tris.size(); i++)
     {
+        //step1 rotation
         for (int j = 0; j < 3; j++)
         {
-            //step1 rotation
-			Projected.tris[i].point[j] = MtimesV(RotationYaw, Projected.tris[i].point[j]);
-            Projected.tris[i].point[j] = MtimesV(RotationPitch, Projected.tris[i].point[j]);
             
-			//step2 projection
-			double x = Projected.tris[i].point[j].x;
-			double y = Projected.tris[i].point[j].y;
-            double z = Projected.tris[i].point[j].z;
-            Projected.tris[i].point[j].z += 2 * distance;
-            Projected.tris[i].point[j].x = 1.5 * unit * x * distance / (distance + z) + ScreenWidth() / 2.0;
-            Projected.tris[i].point[j].y = 1.5 * unit * y * distance / (distance + z) + ScreenHeight() / 2.0;
-        }
-        double NormalValue = (Projected.tris[i].point[1].x - Projected.tris[i].point[0].x) * (Projected.tris[i].point[2].y - Projected.tris[i].point[0].y) - (Projected.tris[i].point[1].y - Projected.tris[i].point[0].y) * (Projected.tris[i].point[2].x - Projected.tris[i].point[0].x);
-        
-		//step3 backface culling
-        if (NormalValue < 0)
-        {
-            DrawTriangle(Projected.tris[i], 128, RGB(0, 0, 0));
+            Projected.tris[i].point[j] = MtimesV(RotationYaw, Projected.tris[i].point[j]);
+            Projected.tris[i].point[j] = MtimesV(RotationPitch, Projected.tris[i].point[j]);
         }
 
-        //step4 lighting
-        double NormalVector[3] = {
+        //step2 backface culling
+        double px = Projected.tris[i].point[1].x;
+        double py = Projected.tris[i].point[1].y;
+        double pz = Projected.tris[i].point[1].z;
+
+        vector3D NormalVector = {
             (Projected.tris[i].point[1].y - Projected.tris[i].point[0].y) * (Projected.tris[i].point[2].z - Projected.tris[i].point[0].z) - (Projected.tris[i].point[1].z - Projected.tris[i].point[0].z) * (Projected.tris[i].point[2].y - Projected.tris[i].point[0].y),
             (Projected.tris[i].point[1].z - Projected.tris[i].point[0].z) * (Projected.tris[i].point[2].x - Projected.tris[i].point[0].x) - (Projected.tris[i].point[1].x - Projected.tris[i].point[0].x) * (Projected.tris[i].point[2].z - Projected.tris[i].point[0].z),
             (Projected.tris[i].point[1].x - Projected.tris[i].point[0].x) * (Projected.tris[i].point[2].y - Projected.tris[i].point[0].y) - (Projected.tris[i].point[1].y - Projected.tris[i].point[0].y) * (Projected.tris[i].point[2].x - Projected.tris[i].point[0].x)
         };
+        vector3D ViewVector = { px, py, pz + distance };
+        //double NormalValue = (Projected.tris[i].point[1].x - Projected.tris[i].point[0].x) * (Projected.tris[i].point[2].y - Projected.tris[i].point[0].y) - (Projected.tris[i].point[1].y - Projected.tris[i].point[0].y) * (Projected.tris[i].point[2].x - Projected.tris[i].point[0].x);
+        double NormalValue = NormalVector.dot(ViewVector);
+        if (NormalValue >= 0)
+        {
+			continue;
+        }
+
+        //step3 projection
+        for (int j = 0; j < 3; j++)
+        {
+			
+			double x = Projected.tris[i].point[j].x;
+			double y = Projected.tris[i].point[j].y;
+            double z = Projected.tris[i].point[j].z;
+            Projected.tris[i].point[j].x = 1.5 * unit * x * distance / (distance + z) + ScreenWidth() / 2.0;
+            Projected.tris[i].point[j].y = 1.5 * unit * y * distance / (distance + z) + ScreenHeight() / 2.0;
+        }
+        
+		//step4 draw wireframe
+        DrawTriangle(Projected.tris[i], 128, RGB(0, 0, 0));
+	
+        //step5 color & lighting
+        Fill(Projected.tris[i], 128, RGB(255, 255, 255));
+        
     }
 }
 
@@ -274,7 +289,7 @@ mesh3D Engine3D::MoveToCenter(mesh3D mesh)
 bool Engine3D::OnUserCreate()
 {
     // read obj file
-    std::ifstream file("icosahedron.obj");
+    std::ifstream file(name);
     if (!file.is_open()) {
         std::cerr << "无法打开文件！" << std::endl;
         return false;
@@ -298,9 +313,9 @@ bool Engine3D::OnUserCreate()
                 // 格式错误，跳出或忽略该行
                 break;
             }
-			point.x *= 1; // 放大顶点坐标以适应显示
-			point.y *= 1;
-			point.z *= 1;
+			point.x *= zoom; // 放大顶点坐标以适应显示
+			point.y *= zoom;
+			point.z *= zoom;
             points.push_back(point);
         }
         else if (type == 'f')

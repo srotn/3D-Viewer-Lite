@@ -45,7 +45,9 @@ public:
 
 	vector3D MtimesV(matrix m, vector3D v);
 	
+	char name[256] = "icosahedron.obj";
 	double fov = 60;
+	double zoom = 1;
 	double distance;
 	double unit;
 	double yaw;

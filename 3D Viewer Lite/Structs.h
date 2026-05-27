@@ -1,15 +1,39 @@
-#pragma once
+﻿#pragma once
 #include <vector>
+#include <cmath>
 
 struct vector3D
 {
 	double x, y, z;
 
+    // 基础向量运算重载
+    vector3D operator+(const vector3D& v) const { return { x + v.x, y + v.y, z + v.z }; }
+    vector3D operator-(const vector3D& v) const { return { x - v.x, y - v.y, z - v.z }; }
+    vector3D operator*(double scalar) const { return { x * scalar, y * scalar, z * scalar }; }
 	bool operator<(const vector3D& other) const
     {
         if (x != other.x) return x < other.x;
         if (y != other.y) return y < other.y;
         return z < other.z;
+    }
+
+    // 点乘、叉乘、归一化
+    double dot(const vector3D& v) const {
+        return x * v.x + y * v.y + z * v.z;
+    }
+
+    vector3D cross(const vector3D& v) const {
+        return {
+            y * v.z - z * v.y,
+            z * v.x - x * v.z,
+            x * v.y - y * v.x
+        };
+    }
+
+    vector3D normalize() const {
+        double len = std::sqrt(x * x + y * y + z * z);
+        if (len == 0) return { 0, 0, 0 };
+        return { x / len, y / len, z / len };
     }
 };
 
