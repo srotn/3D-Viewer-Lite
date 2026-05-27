@@ -72,8 +72,10 @@ void Engine3D::Resize(int width, int height)
     {
         m_pRenderTarget->Resize(D2D1::SizeU(width, height));
 
-        // 随着窗口缩放，同步重新分配 CPU 画布和显卡位图的大小
+        // 随着窗口缩放，同步重新分配 CPU 画布和显卡位图和深度缓冲图的大小
         m_frameBuffer.resize(width * height);
+
+        m_depthBuffer.resize(width * height);
 
         if (m_pBackBufferBitmap) { m_pBackBufferBitmap->Release(); m_pBackBufferBitmap = nullptr; }
         m_pRenderTarget->CreateBitmap(
@@ -88,6 +90,9 @@ void Engine3D::BeginDraw()
 {
     if (m_pRenderTarget)
         m_pRenderTarget->BeginDraw();
+
+    // ====== 新增：清空深度缓冲区（填入无穷大） ======
+    std::fill(m_depthBuffer.begin(), m_depthBuffer.end(), std::numeric_limits<float>::infinity());
 }
 
 void Engine3D::EndDraw()
@@ -158,88 +163,58 @@ void Engine3D::Fill(int lux, int luy, int rdx, int rdy, short transparency, uint
 
 void Engine3D::Fill(triangle3D tri, short transparency, uint32_t color)
 {
-    // 颜色混合
     uint32_t alpha = static_cast<uint32_t>(transparency) & 0xFF;
     uint32_t target = (alpha << 24) | (color & 0x00FFFFFF);
 
-    vector3D p0 = tri.point[0];
-    vector3D p1 = tri.point[1];
-    vector3D p2 = tri.point[2];
+    // 1. 简写三个顶点，方便后续计算
+    vector3D A = tri.point[0];
+    vector3D B = tri.point[1];
+    vector3D C = tri.point[2];
 
-    if (p0.y > p1.y) std::swap(p0, p1);
-    if (p0.y > p2.y) std::swap(p0, p2);
-    if (p1.y > p2.y) std::swap(p1, p2);
+    // 2. 计算三角形的包围盒（Bounding Box），减少不必要的全屏遍历
+    int minX = std::max(0, (int)std::floor(std::min({ A.x, B.x, C.x })));
+    int maxX = std::min(m_width - 1, (int)std::ceil(std::max({ A.x, B.x, C.x })));
+    int minY = std::max(0, (int)std::floor(std::min({ A.y, B.y, C.y })));
+    int maxY = std::min(m_height - 1, (int)std::ceil(std::max({ A.y, B.y, C.y })));
 
-    if (static_cast<int>(p0.y) == static_cast<int>(p2.y)) return;
+    // 重心坐标分母计算
+    double denominator = (B.y - C.y) * (A.x - C.x) + (C.x - B.x) * (A.y - C.y);
+    if (std::abs(denominator) < 1e-6) return; // 退化三角形不绘制
 
+    // 3. 遍历包围盒内的每一个像素
+    for (int y = minY; y <= maxY; ++y)
+    {
+        for (int x = minX; x <= maxX; ++x)
+        {
+            // 计算当前像素中心 (x + 0.5, y + 0.5) 的重心坐标 alpha, beta, gamma
+            double px = x + 0.5;
+            double py = y + 0.5;
 
-    auto drawFlatBottom = [&](const vector3D& top, const vector3D& bot1, const vector3D& bot2) {
-        double invslope1 = (bot1.y != top.y) ? (bot1.x - top.x) / (bot1.y - top.y) : 0;
-        double invslope2 = (bot2.y != top.y) ? (bot2.x - top.x) / (bot2.y - top.y) : 0;
+            double alpha = ((B.y - C.y) * (px - C.x) + (C.x - B.x) * (py - C.y)) / denominator;
+            double beta = ((C.y - A.y) * (px - C.x) + (A.x - C.x) * (py - C.y)) / denominator;
+            double gamma = 1.0 - alpha - beta;
 
-        // 【修正 2】使用 ceil 规范化 Y 轴边界：寻找第一个在其下方的整数行
-        int start_y = (std::max)(0, static_cast<int>(std::ceil(top.y)));
-        int end_y = (std::min)(m_height - 1, static_cast<int>(std::ceil(bot1.y)) - 1);
+            // 4. 判断像素是否在三角形内部
+            if (alpha >= 0 && beta >= 0 && gamma >= 0)
+            {
+                // 5. 【关键点】线性插值计算当前像素的深度 Z
+                float current_z = (float)(alpha * A.z + beta * B.z + gamma * C.z);
 
-        for (int y = start_y; y <= end_y; y++) {
-            double curr_dy = static_cast<double>(y) - top.y;
-            double x1 = top.x + curr_dy * invslope1;
-            double x2 = top.x + curr_dy * invslope2;
+                // 计算当前像素在缓冲区中的一维索引
+                int buffer_index = y * m_width + x;
 
-            if (x1 > x2) std::swap(x1, x2);
+                // 6. ====== Z-Buffer 深度测试 ======
+                // 如果当前像素的深度小于（即更靠近相机）深度缓冲区里记录的值
+                if (current_z < m_depthBuffer[buffer_index])
+                {
+                    // 更新深度缓冲区
+                    m_depthBuffer[buffer_index] = current_z;
 
-            int start_x = (std::max)(0, static_cast<int>(x1));
-            int end_x = (std::min)(m_width - 1, static_cast<int>(x2));
-
-            int scanline_offset = y * m_width;
-            for (int x = start_x; x <= end_x; x++) {
-                m_frameBuffer[scanline_offset + x] = target;
+                    // 写入颜色缓冲区
+                    m_frameBuffer[buffer_index] = target;
+                }
             }
         }
-        };
-
-    auto drawFlatTop = [&](const vector3D& top1, const vector3D& top2, const vector3D& bot) {
-        double invslope1 = (bot.y != top1.y) ? (bot.x - top1.x) / (bot.y - top1.y) : 0;
-        double invslope2 = (bot.y != top2.y) ? (bot.x - top2.x) / (bot.y - top2.y) : 0;
-
-        // 【修正 2】使用 ceil 规范化平顶三角形的起始 Y 轴
-        int start_y = (std::max)(0, static_cast<int>(std::ceil((std::max)(top1.y, top2.y))));
-        int end_y = (std::min)(m_height - 1, static_cast<int>(std::ceil(bot.y)) - 1);
-
-        for (int y = start_y; y <= end_y; y++) {
-            // 【修正 1】各自使用属于自己的 top.y 算步长，拒绝浮点数微小偏差造成的 X 轴歪斜
-            double curr_dy1 = static_cast<double>(y) - top1.y;
-            double curr_dy2 = static_cast<double>(y) - top2.y;
-            double x1 = top1.x + curr_dy1 * invslope1;
-            double x2 = top2.x + curr_dy2 * invslope2;
-
-            if (x1 > x2) std::swap(x1, x2);
-
-            int start_x = (std::max)(0, static_cast<int>(x1));
-            int end_x = (std::min)(m_width - 1, static_cast<int>(x2));
-
-            int scanline_offset = y * m_width;
-            for (int x = start_x; x <= end_x; x++) {
-                m_frameBuffer[scanline_offset + x] = target;
-            }
-        }
-        };
-
-    if (static_cast<int>(p1.y) == static_cast<int>(p2.y)) {
-        drawFlatBottom(p0, p1, p2);
-    }
-    else if (static_cast<int>(p0.y) == static_cast<int>(p1.y)) {
-        drawFlatTop(p0, p1, p2);
-    }
-    else {
-        // 通用三角形逻辑
-        double weight = (p1.y - p0.y) / (p2.y - p0.y);
-        double split_x = p0.x + weight * (p2.x - p0.x);
-
-        vector3D p_split = { split_x, p1.y, p0.z + weight * (p2.z - p0.z) };
-
-        drawFlatBottom(p0, p1, p_split);
-        drawFlatTop(p1, p_split, p2);
     }
 }
 
@@ -520,9 +495,9 @@ void Engine3D::DrawMesh3D(const mesh3D& Centered, float fElapsedTime)
 
         //3 fill & lighting
 
-        double R_Intensity = 256 * tri.NormalVector.dot(Rlight.normalize());
-        double G_Intensity = 256 * tri.NormalVector.dot(Glight.normalize());
-        double B_Intensity = 256 * tri.NormalVector.dot(Blight.normalize());
+        double R_Intensity = -256 * tri.NormalVector.dot(Rlight.normalize());
+        double G_Intensity = -256 * tri.NormalVector.dot(Glight.normalize());
+        double B_Intensity = -256 * tri.NormalVector.dot(Blight.normalize());
 
         if (R_Intensity < 0) R_Intensity = 0;
         if (G_Intensity < 0) G_Intensity = 0;
@@ -530,7 +505,7 @@ void Engine3D::DrawMesh3D(const mesh3D& Centered, float fElapsedTime)
         Fill(tri, 128, RGB(B_Intensity / 2, G_Intensity / 2, R_Intensity / 2));
 
         //4 draw wireframe
-        //DrawTriangle(tri, 128, 0x00ff0000);
+        DrawTriangle(tri, 128, 0x00ff0000);
     }
 }
 

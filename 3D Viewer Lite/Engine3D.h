@@ -49,7 +49,7 @@ public:
 
 	
 	char name[256] = "Old Teapot.obj";
-	//char name[256] = "Axis.obj";
+	//char name[256] = "icosahedron.obj";
 	double fov = 60;
 	double zoom = 1;
 	vector3D Rlight = { -1, 1, 1 };
@@ -72,6 +72,9 @@ private:
 
 	// 屏幕缓冲区
 	std::vector<uint32_t> m_frameBuffer;
+
+	// ====== 新增 Z-Buffer ======
+	std::vector<float> m_depthBuffer;    // 存储每个像素的深度值 (Z)
 
 	// 位图纹理
 	ID2D1Bitmap* m_pBackBufferBitmap = nullptr;
