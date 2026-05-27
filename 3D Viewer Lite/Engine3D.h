@@ -23,15 +23,15 @@ public:
 
 	int ScreenWidth();
 
-	void Fill(triangle3D tri, short transparency, int color);
+	void Fill(triangle3D tri, short transparency, uint32_t color);
 
-	void Fill(int lux, int luy, int rdx, int rdy, short transparency, COLORREF color);
+	void Fill(int lux, int luy, int rdx, int rdy, short transparency, uint32_t color);
 
-	void Fill(short transparency, int color);
+	void Fill(short transparency, uint32_t color);
 
-	void Drawline(int x1, int y1, int x2, int y2, int width, COLORREF color);
+	void Drawline(int x1, int y1, int x2, int y2, short transparency, uint32_t color);
 
-	void DrawTriangle(triangle3D tri, short transparency, int color);
+	void DrawTriangle(triangle3D tri, short transparency, uint32_t color);
 
 	void DrawMesh3D(mesh3D Centered, float fElapsedTime);
 
@@ -69,11 +69,11 @@ private:
 	ID2D1Factory* m_pD2DFactory = nullptr;
 	ID2D1HwndRenderTarget* m_pRenderTarget = nullptr;
 
-	// 笔刷缓存（可选，避免频繁创建）
-	std::unordered_map<COLORREF, ID2D1SolidColorBrush*> m_brushCache;
+	// 屏幕缓冲区
+	std::vector<uint32_t> m_frameBuffer;
 
-	// 辅助函数：获取或创建对应颜色的笔刷（在当前活动渲染目标上）
-	ID2D1SolidColorBrush* GetBrush(COLORREF color);
+	// 位图纹理
+	ID2D1Bitmap* m_pBackBufferBitmap = nullptr;
 
 	mesh3D meshInput;
 	

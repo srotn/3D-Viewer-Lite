@@ -6,13 +6,7 @@ Engine3D::Engine3D()
 
 Engine3D::~Engine3D()
 {
-    // 清理笔刷缓存（防空检查）
-    for (auto& pair : m_brushCache)
-    {
-        if (pair.second) pair.second->Release();
-    }
-    m_brushCache.clear();
-
+    if (m_pBackBufferBitmap) { m_pBackBufferBitmap->Release(); m_pBackBufferBitmap = nullptr; }
     if (m_pRenderTarget) { m_pRenderTarget->Release(); m_pRenderTarget = nullptr; }
     if (m_pD2DFactory) { m_pD2DFactory->Release(); m_pD2DFactory = nullptr; }
 }
@@ -47,6 +41,21 @@ bool Engine3D::Initialize(HWND hwnd)
         &m_pRenderTarget
     );
 
+    if (FAILED(hr)) return false;
+
+    // ----------------- 【初始化 CPU 画布与显卡纹理桥梁】 -----------------
+    // 1. 初始化 CPU 内存画布大小
+    m_frameBuffer.assign(m_width * m_height, 0xFF000000); // 默认为全黑不透明
+
+    // 2. 创建一个同等大小的 GPU 纹理位图
+    if (m_pBackBufferBitmap) { m_pBackBufferBitmap->Release(); m_pBackBufferBitmap = nullptr; }
+    hr = m_pRenderTarget->CreateBitmap(
+        D2D1::SizeU(m_width, m_height),
+        D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)),
+        &m_pBackBufferBitmap
+    );
+    // ------------------------------------------------------------------
+
     QueryPerformanceFrequency(&m_freq);
     QueryPerformanceCounter(&m_lastTime);
     m_firstFrame = true;
@@ -56,12 +65,23 @@ bool Engine3D::Initialize(HWND hwnd)
 
 void Engine3D::Resize(int width, int height)
 {
+    m_width = width;
+    m_height = height;
+
     if (m_pRenderTarget)
     {
         m_pRenderTarget->Resize(D2D1::SizeU(width, height));
+
+        // 随着窗口缩放，同步重新分配 CPU 画布和显卡位图的大小
+        m_frameBuffer.resize(width * height);
+
+        if (m_pBackBufferBitmap) { m_pBackBufferBitmap->Release(); m_pBackBufferBitmap = nullptr; }
+        m_pRenderTarget->CreateBitmap(
+            D2D1::SizeU(width, height),
+            D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)),
+            &m_pBackBufferBitmap
+        );
     }
-    m_width = width;
-    m_height = height;
 }
 
 void Engine3D::BeginDraw()
@@ -74,19 +94,26 @@ void Engine3D::EndDraw()
 {
     if (m_pRenderTarget)
     {
+        // ----------------- 【核心桥梁：将 CPU 纯手写像素统一上传 GPU】 -----------------
+        if (m_pBackBufferBitmap)
+        {
+            // A. 把我们写满像素数据的 m_frameBuffer 整个复制到显卡纹理中
+            m_pBackBufferBitmap->CopyFromMemory(
+                nullptr,
+                m_frameBuffer.data(),
+                m_width * sizeof(uint32_t) // 步长：每行有多少字节
+            );
+
+            // B. 用显卡把这块纹理直接拉伸/贴到屏幕上（极速一枪头提交）
+            m_pRenderTarget->DrawBitmap(m_pBackBufferBitmap);
+        }
+        // -------------------------------------------------------------------------
+
         HRESULT hr = m_pRenderTarget->EndDraw();
         if (hr == D2DERR_RECREATE_TARGET)
         {
-            // 先释放并清空与旧渲染目标绑定的资源（笔刷等）
-            for (auto& pair : m_brushCache)
-            {
-                if (pair.second) pair.second->Release();
-            }
-            m_brushCache.clear();
-
+            if (m_pBackBufferBitmap) { m_pBackBufferBitmap->Release(); m_pBackBufferBitmap = nullptr; }
             if (m_pRenderTarget) { m_pRenderTarget->Release(); m_pRenderTarget = nullptr; }
-
-            // 重新初始化渲染目标（factory 已由 Initialize 管理）
             Initialize(m_hwnd);
         }
     }
@@ -96,138 +123,257 @@ int Engine3D::ScreenHeight()
 {
     return m_height;
 }
-
+    
 int Engine3D::ScreenWidth()
 {
     return m_width;
 }
 
-ID2D1SolidColorBrush* Engine3D::GetBrush(COLORREF color)
+//----------------------------------------------------
+//核心渲染工作区域
+void Engine3D::Fill(short transparency, uint32_t color)
 {
-    // 如果没有有效渲染目标，直接返回空，调用方应检查返回值
-    if (!m_pRenderTarget) return nullptr;
+    //color mixing
+    uint32_t alpha = static_cast<uint32_t>(transparency) & 0xFF;
+    uint32_t target = (alpha << 24) | (color & 0x00FFFFFF);
 
-    auto it = m_brushCache.find(color);
-    if (it != m_brushCache.end())
-    {
-        return it->second;
-    }
-
-    float r = GetRValue(color) / 255.0f;
-    float g = GetGValue(color) / 255.0f;
-    float b = GetBValue(color) / 255.0f;
-    ID2D1SolidColorBrush* brush = nullptr;
-    HRESULT hr = m_pRenderTarget->CreateSolidColorBrush(
-        D2D1::ColorF(r, g, b),
-        &brush
-    );
-    if (SUCCEEDED(hr) && brush)
-    {
-        m_brushCache[color] = brush;
-        return brush;
-    }
-    // 创建失败返回 nullptr
-    return nullptr;
+    std::fill(m_frameBuffer.begin(), m_frameBuffer.end(), target);
 }
 
-void Engine3D::Fill(short transparency, int color)
+void Engine3D::Fill(int lux, int luy, int rdx, int rdy, short transparency, uint32_t color)
 {
-    // 透明参数忽略，Direct2D 可以设置笔刷透明度，这里简单填充
-    if (!m_pRenderTarget) return;
-    COLORREF col = static_cast<COLORREF>(color);
-    ID2D1SolidColorBrush* brush = GetBrush(col);
-    if (brush)
+    uint32_t alpha = static_cast<uint32_t>(transparency) & 0xFF;
+    uint32_t target = (alpha << 24) | (color & 0x00FFFFFF);
+    for (int i = luy; i < rdy; i++)
     {
-        // 设置透明度（可选）
-        brush->SetOpacity(transparency / 255.0f);
-        m_pRenderTarget->Clear(D2D1::ColorF(GetRValue(col) / 255.0f, GetGValue(col) / 255.0f, GetBValue(col) / 255.0f));
-    }
-}
-
-void Engine3D::Fill(int lux, int luy, int rdx, int rdy, short transparency, COLORREF color)
-{
-    if (!m_pRenderTarget) return;
-    ID2D1SolidColorBrush* brush = GetBrush(color);
-    if (brush)
-    {
-        brush->SetOpacity(transparency / 255.0f);
-        D2D1_RECT_F rect = D2D1::RectF((float)lux, (float)luy, (float)rdx, (float)rdy);
-        m_pRenderTarget->FillRectangle(rect, brush);
-        brush->SetOpacity(1.0f);
-    }
-}
-
-void Engine3D::Fill(triangle3D tri, short transparency, int color)
-{
-    if (!m_pRenderTarget) return;
-
-	//set brush opacity for this fill operation
-    COLORREF col = static_cast<COLORREF>(color);
-    ID2D1SolidColorBrush* brush = GetBrush(col);
-    if (!brush) return;
-
-    float oldOpacity = brush->GetOpacity();
-    brush->SetOpacity(transparency / 255.0f);
-
-	//create path geometry for the triangle
-    ID2D1PathGeometry* pGeometry = nullptr;
-    HRESULT hr = m_pD2DFactory->CreatePathGeometry(&pGeometry);
-    if (SUCCEEDED(hr))
-    {
-        ID2D1GeometrySink* pSink = nullptr;
-        hr = pGeometry->Open(&pSink);
-        if (SUCCEEDED(hr))
+        for(int j = lux; j < rdx; j++)
         {
-			//convert triangle points to D2D1_POINT_2F
-            D2D1_POINT_2F points[3] = {
-                { (float)tri.point[0].x, (float)tri.point[0].y },
-                { (float)tri.point[1].x, (float)tri.point[1].y },
-                { (float)tri.point[2].x, (float)tri.point[2].y }
-            };
-
-            pSink->BeginFigure(points[0], D2D1_FIGURE_BEGIN_FILLED);
-            pSink->AddLine(points[1]);
-            pSink->AddLine(points[2]);
-            pSink->EndFigure(D2D1_FIGURE_END_CLOSED);
-
-            pSink->Close();
+            if (i >= 0 && i < m_height && j >= 0 && j < m_width)
+            {
+				m_frameBuffer[i * m_width + j] = target;
+			}
         }
-        pSink->Release();
-
-        //fill
-        m_pRenderTarget->FillGeometry(pGeometry, brush);
-        pGeometry->Release();
     }
+}
 
-    brush->SetOpacity(oldOpacity);
+void Engine3D::Fill(triangle3D tri, short transparency, uint32_t color)
+{
+    //color mixing
+    uint32_t alpha = static_cast<uint32_t>(transparency) & 0xFF;
+    uint32_t target = (alpha << 24) | (color & 0x00FFFFFF);
+
+
     
 }
 
-void Engine3D::Drawline(int x1, int y1, int x2, int y2, int width, COLORREF color)
+void Engine3D::Drawline(int x1, int y1, int x2, int y2, short transparency, uint32_t color)
 {
-    if (!m_pRenderTarget) return;
-    ID2D1SolidColorBrush* brush = GetBrush(color);
-    if (brush)
+    //color mixing
+    uint32_t alpha = static_cast<uint32_t>(transparency) & 0xFF;
+    uint32_t target = (alpha << 24) | (color & 0x00FFFFFF);
+
+    // 1.右下，x主导
     {
-        m_pRenderTarget->DrawLine(
-            D2D1::Point2F((float)x1, (float)y1),
-            D2D1::Point2F((float)x2, (float)y2),
-            brush,
-            (float)width
-        );
+        int y_1 = y1;
+        if (x1 < x2 && y2 > y1 && x2 - x1 >= y2 - y1)
+        {
+            for (int x_1 = x1; x_1 <= x2; x_1++)
+            {
+                if (x_1 >= 0 && x_1 < m_width && y_1 >= 0 && y_1 < m_height)
+                {
+                    m_frameBuffer[y_1 * m_width + x_1] = target;
+                }
+                if ((x_1 - x1) * (y2 - y1) * 2 > (2 * (y_1 - y1) + 1) * (x2 - x1)) y_1++;
+            }
+        }
     }
+    // 2. 右上, X主导
+    {
+        int y_1 = y1;
+        if (x1 < x2 && y2 < y1 && (x2 - x1) >= (y1 - y2))
+        {
+            for (int x_1 = x1; x_1 <= x2; x_1++)
+            {
+                if (x_1 >= 0 && x_1 < m_width && y_1 >= 0 && y_1 < m_height)
+                {
+                    m_frameBuffer[y_1 * m_width + x_1] = target;
+                }
+                // y_1 应该减小。当理想纵向进度比当前大 0.5 像素时执行 y_1--
+                if ((x_1 - x1) * (y1 - y2) * 2 > (2 * (y1 - y_1) + 1) * (x2 - x1)) y_1--;
+            }
+        }
+    }
+    // 3. 左下, X主导
+    {
+        int y_1 = y1;
+        if (x1 > x2 && y2 > y1 && (x1 - x2) >= (y2 - y1))
+        {
+            for (int x_1 = x1; x_1 >= x2; x_1--)
+            {
+                if (x_1 >= 0 && x_1 < m_width && y_1 >= 0 && y_1 < m_height)
+                {
+                    m_frameBuffer[y_1 * m_width + x_1] = target;
+                }
+                // x_1 在减小，进度为 (x1 - x_1)。当理想纵向进度大 0.5 时执行 y_1++
+                if ((x1 - x_1) * (y2 - y1) * 2 > (2 * (y_1 - y1) + 1) * (x1 - x2)) y_1++;
+            }
+        }
+    }
+    {
+        // 4. 左上, X主导
+        int y_1 = y1;
+        if (x1 > x2 && y2 < y1 && (x1 - x2) >= (y1 - y2))
+        {
+            for (int x_1 = x1; x_1 >= x2; x_1--)
+            {
+                if (x_1 >= 0 && x_1 < m_width && y_1 >= 0 && y_1 < m_height)
+                {
+                    m_frameBuffer[y_1 * m_width + x_1] = target;
+                }
+                // x_1 和 y_1 都在减小
+                if ((x1 - x_1) * (y1 - y2) * 2 > (2 * (y1 - y_1) + 1) * (x1 - x2)) y_1--;
+            }
+        }
+    }
+    {
+        // 5. 右下, Y主导
+        int x_1 = x1;
+        if (x1 < x2 && y2 > y1 && (y2 - y1) > (x2 - x1))
+        {
+            for (int y_1 = y1; y_1 <= y2; y_1++)
+            {
+                if (x_1 >= 0 && x_1 < m_width && y_1 >= 0 && y_1 < m_height)
+                {
+                    m_frameBuffer[y_1 * m_width + x_1] = target;
+                }
+                // 交换 X 和 Y 的角色，当理想横向进度比当前大 0.5 时执行 x_1++
+                if ((y_1 - y1) * (x2 - x1) * 2 > (2 * (x_1 - x1) + 1) * (y2 - y1)) x_1++;
+            }
+        }
+    }
+    {
+        // 6. 右上, Y主导
+        int x_1 = x1;
+        if (x1 < x2 && y2 < y1 && (y1 - y2) >(x2 - x1))
+        {
+            for (int y_1 = y1; y_1 >= y2; y_1--)
+            {
+                if (x_1 >= 0 && x_1 < m_width && y_1 >= 0 && y_1 < m_height)
+                {
+                    m_frameBuffer[y_1 * m_width + x_1] = target;
+                }
+                // y_1 减小，进度为 (y1 - y_1)，x_1 应该增加
+                if ((y1 - y_1) * (x2 - x1) * 2 > (2 * (x_1 - x1) + 1) * (y1 - y2)) x_1++;
+            }
+        }
+    }
+    {
+        // 7. 左下, Y主导
+        int x_1 = x1;
+        if (x1 > x2 && y2 > y1 && (y2 - y1) > (x1 - x2))
+        {
+            for (int y_1 = y1; y_1 <= y2; y_1++)
+            {
+                if (x_1 >= 0 && x_1 < m_width && y_1 >= 0 && y_1 < m_height)
+                {
+                    m_frameBuffer[y_1 * m_width + x_1] = target;
+                }
+                // y_1 增加，x_1 应该减小
+                if ((y_1 - y1) * (x1 - x2) * 2 > (2 * (x1 - x_1) + 1) * (y2 - y1)) x_1--;
+            }
+        }
+    }
+    {
+        // 8. 左上, Y主导
+        int x_1 = x1;
+        if (x1 > x2 && y2 < y1 && (y1 - y2) >(x1 - x2))
+        {
+            for (int y_1 = y1; y_1 >= y2; y_1--)
+            {
+                if (x_1 >= 0 && x_1 < m_width && y_1 >= 0 && y_1 < m_height)
+                {
+                    m_frameBuffer[y_1 * m_width + x_1] = target;
+                }
+                // y_1 和 x_1 都在减小
+                if ((y1 - y_1) * (x1 - x2) * 2 > (2 * (x1 - x_1) + 1) * (y1 - y2)) x_1--;
+            }
+        }
+    }
+    {
+        // 9. 纯水平向右 (包含起点终点重合的点)
+        int y_1 = y1;
+        if (y1 == y2 && x1 <= x2)
+        {
+            for (int x_1 = x1; x_1 <= x2; x_1++)
+            {
+                if (x_1 >= 0 && x_1 < m_width && y_1 >= 0 && y_1 < m_height)
+                {
+                    m_frameBuffer[y_1 * m_width + x_1] = target;
+                }
+                // 纯水平线，y_1 始终保持不变，无需误差判定
+            }
+        }
+    }
+    {
+        // 10. 纯水平向左
+        int y_1 = y1;
+        if (y1 == y2 && x1 > x2)
+        {
+            for (int x_1 = x1; x_1 >= x2; x_1--)
+            {
+                if (x_1 >= 0 && x_1 < m_width && y_1 >= 0 && y_1 < m_height)
+                {
+                    m_frameBuffer[y_1 * m_width + x_1] = target;
+                }
+                // 纯水平线，y_1 始终保持不变，无需误差判定
+            }
+        }
+    }
+    {
+        // 11. 纯垂直向下
+        int x_1 = x1;
+        if (x1 == x2 && y1 < y2)
+        {
+            for (int y_1 = y1; y_1 <= y2; y_1++)
+            {
+                if (x_1 >= 0 && x_1 < m_width && y_1 >= 0 && y_1 < m_height)
+                {
+                    m_frameBuffer[y_1 * m_width + x_1] = target;
+                }
+                // 纯垂直线，x_1 始终保持不变，无需误差判定
+            }
+        }
+    }
+    {
+        // 12. 纯垂直向上
+        int x_1 = x1;
+        if (x1 == x2 && y1 > y2)
+        {
+            for (int y_1 = y1; y_1 >= y2; y_1--)
+            {
+                if (x_1 >= 0 && x_1 < m_width && y_1 >= 0 && y_1 < m_height)
+                {
+                    m_frameBuffer[y_1 * m_width + x_1] = target;
+                }
+                // 纯垂直线，x_1 始终保持不变，无需误差判定
+            }
+        }
+    }
+
+
 }
 
-void Engine3D::DrawTriangle(triangle3D tri, short transparency, int color)
+void Engine3D::DrawTriangle(triangle3D tri, short transparency, uint32_t color)
 {
     for (int i = 0; i < 3; ++i)
     {
         int j = (i + 1) % 3;
         Drawline((int)tri.point[i].x, (int)tri.point[i].y,
             (int)tri.point[j].x, (int)tri.point[j].y,
-            1, color);
+            255, color);
     }
 }
+//----------------------------------------------------
 
 void Engine3D::DrawMesh3D(mesh3D Centered, float fElapsedTime)
 {
@@ -313,10 +459,10 @@ void Engine3D::DrawMesh3D(mesh3D Centered, float fElapsedTime)
         if (G_Intensity < 0) G_Intensity = 0;
         if (B_Intensity < 0) B_Intensity = 0;
 
-        Fill(tri, 128, RGB(R_Intensity, G_Intensity, B_Intensity));
+        //Fill(tri, 128, RGB(R_Intensity, G_Intensity, B_Intensity));
         
         //4 draw wireframe
-        DrawTriangle(tri, 128, RGB(50, 50, 50));
+        DrawTriangle(tri, 256, 0x00ffffff);
     }
 }
 
