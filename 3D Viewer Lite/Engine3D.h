@@ -43,22 +43,22 @@ public:
 
 	void UpdateYawAndPitch(int x, int y);
 
-	void CreateRotationMatrix(double yaw, double pitch);
+	void CreateRotationMatrix(float yaw, float pitch);
 
 	mesh3D LoadFromObjectFile(std::string filename);
 
-	
+
 	char name[256] = "Old Teapot.obj";
 	//char name[256] = "icosahedron.obj";
-	double fov = 60;
-	double zoom = 1;
+	float fov = 60;
+	float zoom = 1;
 	vector3D Rlight = { -1, 1, 1 };
 	vector3D Glight = { -1, 1, 1 };
 	vector3D Blight = { -1, 1, 1 };
-	double distance;
-	double unit;
-	double yaw;
-	double pitch;
+	float distance;
+	float unit;
+	float yaw;
+	float pitch;
 
 	matrix RotationYaw;
 	matrix RotationPitch;
@@ -80,7 +80,7 @@ private:
 	ID2D1Bitmap* m_pBackBufferBitmap = nullptr;
 
 	mesh3D meshInput;
-	
+
 	int m_width = 0, m_height = 0;
 	HWND m_hwnd = nullptr;
 

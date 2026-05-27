@@ -53,7 +53,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
     case WM_MOUSEWHEEL:
     {
         short zDelta = GET_WHEEL_DELTA_WPARAM(wParam);
-        
+
         if (zDelta > 0) {
             engine.zoom += 0.1;
         }
@@ -69,7 +69,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
     return DefWindowProc(hwnd, uMsg, wParam, lParam);
 }
 
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow){
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     // 窗口注册与创建（不变）
     const wchar_t CLASS_NAME[] = L"3DViewerWindow";
     WNDCLASS wc = {};

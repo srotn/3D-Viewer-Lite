@@ -4,13 +4,13 @@
 
 struct vector3D
 {
-	double x, y, z;
+    float x, y, z;
 
     // 基础向量运算重载
     vector3D operator+(const vector3D& v) const { return { x + v.x, y + v.y, z + v.z }; }
     vector3D operator-(const vector3D& v) const { return { x - v.x, y - v.y, z - v.z }; }
-    vector3D operator*(double scalar) const { return { x * scalar, y * scalar, z * scalar }; }
-	bool operator<(const vector3D& other) const
+    vector3D operator*(float scalar) const { return { x * scalar, y * scalar, z * scalar }; }
+    bool operator<(const vector3D& other) const
     {
         if (x != other.x) return x < other.x;
         if (y != other.y) return y < other.y;
@@ -18,7 +18,7 @@ struct vector3D
     }
 
     // 点乘、叉乘、归一化
-    double dot(const vector3D& v) const {
+    float dot(const vector3D& v) const {
         return x * v.x + y * v.y + z * v.z;
     }
 
@@ -31,7 +31,7 @@ struct vector3D
     }
 
     vector3D normalize() const {
-        double len = std::sqrt(x * x + y * y + z * z);
+        float len = std::sqrt(x * x + y * y + z * z);
         if (len == 0) return { 0, 0, 0 };
         return { x / len, y / len, z / len };
     }
@@ -39,17 +39,17 @@ struct vector3D
 
 struct triangle3D
 {
-	vector3D point[3];
+    vector3D point[3];
     vector3D NormalVector;
     vector3D ViewVector;
 };
 
 struct mesh3D
 {
-	std::vector<triangle3D> tris;
+    std::vector<triangle3D> tris;
 };
 
 struct matrix
 {
-	double m[4][4] = { 0 };
+    float m[4][4] = { 0 };
 };

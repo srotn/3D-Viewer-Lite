@@ -91,6 +91,7 @@ void Engine3D::BeginDraw()
     if (m_pRenderTarget)
         m_pRenderTarget->BeginDraw();
 
+    std::fill(m_frameBuffer.begin(), m_frameBuffer.end(), 0x00808080);
     // ====== 新增：清空深度缓冲区（填入无穷大） ======
     std::fill(m_depthBuffer.begin(), m_depthBuffer.end(), std::numeric_limits<float>::infinity());
 }
@@ -128,7 +129,7 @@ int Engine3D::ScreenHeight()
 {
     return m_height;
 }
-    
+
 int Engine3D::ScreenWidth()
 {
     return m_width;
@@ -151,12 +152,12 @@ void Engine3D::Fill(int lux, int luy, int rdx, int rdy, short transparency, uint
     uint32_t target = (alpha << 24) | (color & 0x00FFFFFF);
     for (int i = luy; i < rdy; i++)
     {
-        for(int j = lux; j < rdx; j++)
+        for (int j = lux; j < rdx; j++)
         {
             if (i >= 0 && i < m_height && j >= 0 && j < m_width)
             {
-				m_frameBuffer[i * m_width + j] = target;
-			}
+                m_frameBuffer[i * m_width + j] = target;
+            }
         }
     }
 }
@@ -178,7 +179,7 @@ void Engine3D::Fill(triangle3D tri, short transparency, uint32_t color)
     int maxY = std::min(m_height - 1, (int)std::ceil(std::max({ A.y, B.y, C.y })));
 
     // 重心坐标分母计算
-    double denominator = (B.y - C.y) * (A.x - C.x) + (C.x - B.x) * (A.y - C.y);
+    float denominator = (B.y - C.y) * (A.x - C.x) + (C.x - B.x) * (A.y - C.y);
     if (std::abs(denominator) < 1e-6) return; // 退化三角形不绘制
 
     // 3. 遍历包围盒内的每一个像素
@@ -187,12 +188,12 @@ void Engine3D::Fill(triangle3D tri, short transparency, uint32_t color)
         for (int x = minX; x <= maxX; ++x)
         {
             // 计算当前像素中心 (x + 0.5, y + 0.5) 的重心坐标 alpha, beta, gamma
-            double px = x + 0.5;
-            double py = y + 0.5;
+            float px = x + 0.5;
+            float py = y + 0.5;
 
-            double alpha = ((B.y - C.y) * (px - C.x) + (C.x - B.x) * (py - C.y)) / denominator;
-            double beta = ((C.y - A.y) * (px - C.x) + (A.x - C.x) * (py - C.y)) / denominator;
-            double gamma = 1.0 - alpha - beta;
+            float alpha = ((B.y - C.y) * (px - C.x) + (C.x - B.x) * (py - C.y)) / denominator;
+            float beta = ((C.y - A.y) * (px - C.x) + (A.x - C.x) * (py - C.y)) / denominator;
+            float gamma = 1.0 - alpha - beta;
 
             // 4. 判断像素是否在三角形内部
             if (alpha >= 0 && beta >= 0 && gamma >= 0)
@@ -272,7 +273,7 @@ void Engine3D::Drawline(int x1, int y1, int x2, int y2, short transparency, uint
         }
     }
     // 4. 左上, X主导
-    { 
+    {
         int y_1 = y1;
         if (x1 > x2 && y2 < y1 && (x1 - x2) >= (y1 - y2))
         {
@@ -446,9 +447,9 @@ void Engine3D::DrawMesh3D(const mesh3D& Centered, float fElapsedTime)
         }
 
         //step2 backface culling
-        double px = tri.point[1].x;
-        double py = tri.point[1].y;
-        double pz = tri.point[1].z;
+        float px = tri.point[1].x;
+        float py = tri.point[1].y;
+        float pz = tri.point[1].z;
 
         vector3D NormalVector = {
             (tri.point[1].y - tri.point[0].y) * (tri.point[2].z - tri.point[0].z) - (tri.point[1].z - tri.point[0].z) * (tri.point[2].y - tri.point[0].y),
@@ -458,7 +459,7 @@ void Engine3D::DrawMesh3D(const mesh3D& Centered, float fElapsedTime)
         NormalVector = NormalVector.normalize();
         vector3D ViewVector = { px, py, pz + distance };
 
-        double NormalValue = NormalVector.dot(ViewVector);
+        float NormalValue = NormalVector.dot(ViewVector);
         if (NormalValue > 0)
         {
             continue;
@@ -472,20 +473,20 @@ void Engine3D::DrawMesh3D(const mesh3D& Centered, float fElapsedTime)
         for (int j = 0; j < 3; j++)
         {
 
-            double x = tri.point[j].x;
-            double y = tri.point[j].y;
-            double z = tri.point[j].z;
+            float x = tri.point[j].x;
+            float y = tri.point[j].y;
+            float z = tri.point[j].z;
             tri.point[j].x = 1.5 * unit * x * distance / (distance + z) + ScreenWidth() / 2.0;
             tri.point[j].y = 1.5 * unit * y * distance / (distance + z) + ScreenHeight() / 2.0;
         }
 
         //2 sorting by depth (Painter's algorithm)
-        /*std::vector<std::pair<double, size_t>> depthIndices;
+        /*std::vector<std::pair<float, size_t>> depthIndices;
         depthIndices.reserve(PreProcessed.tris.size());
 
         for (size_t i = 0; i < PreProcessed.tris.size(); i++)
         {
-            double aDepth = (PreProcessed.tris[i].point[0].z + PreProcessed.tris[i].point[1].z + PreProcessed.tris[i].point[2].z) / 3.0;
+            float aDepth = (PreProcessed.tris[i].point[0].z + PreProcessed.tris[i].point[1].z + PreProcessed.tris[i].point[2].z) / 3.0;
             depthIndices.push_back({ aDepth, i });
         }
 
@@ -493,11 +494,11 @@ void Engine3D::DrawMesh3D(const mesh3D& Centered, float fElapsedTime)
             return a.first > b.first;
             });*/
 
-        //3 fill & lighting
+            //3 fill & lighting
 
-        double R_Intensity = -256 * tri.NormalVector.dot(Rlight.normalize());
-        double G_Intensity = -256 * tri.NormalVector.dot(Glight.normalize());
-        double B_Intensity = -256 * tri.NormalVector.dot(Blight.normalize());
+        float R_Intensity = -256 * tri.NormalVector.dot(Rlight.normalize());
+        float G_Intensity = -256 * tri.NormalVector.dot(Glight.normalize());
+        float B_Intensity = -256 * tri.NormalVector.dot(Blight.normalize());
 
         if (R_Intensity < 0) R_Intensity = 0;
         if (G_Intensity < 0) G_Intensity = 0;
@@ -505,13 +506,13 @@ void Engine3D::DrawMesh3D(const mesh3D& Centered, float fElapsedTime)
         Fill(tri, 128, RGB(B_Intensity / 2, G_Intensity / 2, R_Intensity / 2));
 
         //4 draw wireframe
-        DrawTriangle(tri, 128, 0x00ff0000);
+        //DrawTriangle(tri, 128, 0x00ff0000);
     }
 }
 
 mesh3D Engine3D::MoveToCenter(mesh3D mesh)
 {
-    double cx = 0, cy = 0, cz = 0;
+    float cx = 0, cy = 0, cz = 0;
     std::set<vector3D> allpoints;
 
     for (const triangle3D& tri : mesh.tris)
@@ -535,9 +536,9 @@ mesh3D Engine3D::MoveToCenter(mesh3D mesh)
         cz += point.z;
     }
 
-    cx /= static_cast<double>(allpoints.size());
-    cy /= static_cast<double>(allpoints.size());
-    cz /= static_cast<double>(allpoints.size());
+    cx /= static_cast<float>(allpoints.size());
+    cy /= static_cast<float>(allpoints.size());
+    cz /= static_cast<float>(allpoints.size());
 
     for (size_t i = 0; i < mesh.tris.size(); i++)
     {
@@ -555,7 +556,7 @@ mesh3D Engine3D::MoveToCenter(mesh3D mesh)
 bool Engine3D::OnUserCreate()
 {
     // read obj file
-	meshInput = LoadFromObjectFile(name);
+    meshInput = LoadFromObjectFile(name);
 
     meshInput = MoveToCenter(meshInput);
 
@@ -567,8 +568,8 @@ bool Engine3D::OnUserUpdate(float fElapsedTime)
     //WORK
     Fill(255, 0x404040);
 
-	CreateRotationMatrix(yaw, pitch);
-    double fov_rad = fov * 3.1415926535 / 180.0;
+    CreateRotationMatrix(yaw, pitch);
+    float fov_rad = fov * 3.1415926535 / 180.0;
     if (fov <= 0.0)
     {
         distance = 10000.0;   // 正交
@@ -576,13 +577,13 @@ bool Engine3D::OnUserUpdate(float fElapsedTime)
     else
     {
         distance = 4.0 / tan(fov_rad * 0.5);
-        const double MIN_DIST = 1.5;
+        const float MIN_DIST = 1.5;
         if (distance < MIN_DIST) distance = MIN_DIST;
         if (distance > 1000.0) distance = 1000.0;
     }
     unit = sqrt(ScreenHeight() * ScreenHeight() + ScreenWidth() * ScreenWidth()) / 16;
 
-	DrawMesh3D(meshInput, fElapsedTime);
+    DrawMesh3D(meshInput, fElapsedTime);
 
     return true;
 }
@@ -595,7 +596,7 @@ void Engine3D::Render()
 
     if (!m_firstFrame)
     {
-        deltaTime = (float)((now.QuadPart - m_lastTime.QuadPart) / (double)m_freq.QuadPart);
+        deltaTime = (float)((now.QuadPart - m_lastTime.QuadPart) / (float)m_freq.QuadPart);
         // 限制最大增量（比如 0.1 秒），防止调试断点导致跳跃太大
         if (deltaTime > 0.1f) deltaTime = 0.016f;
     }
@@ -612,20 +613,20 @@ void Engine3D::Render()
 
 void Engine3D::UpdateYawAndPitch(int delta_x, int delta_y)
 {
-    yaw -= static_cast<double>(delta_x) / static_cast<double>(400) * 3.1415926;
-    pitch += static_cast<double>(delta_y) / static_cast<double>(400) * 3.1415926;
-	// 限制 pitch 在 -90 到 +90 度之间
+    yaw -= static_cast<float>(delta_x) / static_cast<float>(400) * 3.1415926;
+    pitch += static_cast<float>(delta_y) / static_cast<float>(400) * 3.1415926;
+    // 限制 pitch 在 -90 到 +90 度之间
     if (pitch >= 3.14159 / 2) pitch = 3.14159 / 2;
     if (pitch <= -3.14159 / 2) pitch = -3.14159 / 2;
 }
 
-void Engine3D::CreateRotationMatrix(double yaw, double pitch)
+void Engine3D::CreateRotationMatrix(float yaw, float pitch)
 {
     matrix rotation;
-    double cosYaw = cos(yaw);
-    double sinYaw = sin(yaw);
-    double cosPitch = cos(pitch);
-    double sinPitch = sin(pitch);
+    float cosYaw = cos(yaw);
+    float sinYaw = sin(yaw);
+    float cosPitch = cos(pitch);
+    float sinPitch = sin(pitch);
     RotationYaw = {
         {
         { cosYaw, 0, sinYaw, 0 },
@@ -641,54 +642,54 @@ void Engine3D::CreateRotationMatrix(double yaw, double pitch)
         { 0, sinPitch, cosPitch, 0 },
         { 0, 0, 0, 1 }
         }
-	};
+    };
 }
 
-mesh3D Engine3D::LoadFromObjectFile(std::string filename) 
+mesh3D Engine3D::LoadFromObjectFile(std::string filename)
 {
     std::ifstream f(filename);
     mesh3D mesh;
     std::vector<vector3D> verts; // 暂存所有顶点
 
     std::string line;
-    while (std::getline(f, line)) 
+    while (std::getline(f, line))
     {
         std::string junk;
         if (line.empty() || line[0] == '#') continue;
 
-        if (line[0] == 'v' && line[1] == ' ') 
+        if (line[0] == 'v' && line[1] == ' ')
         { // 读取顶点
             std::stringstream ss(line);
             vector3D v;
             ss >> junk >> v.x >> v.y >> v.z;
             verts.push_back(v);
         }
-        else if (line[0] == 'f' && line[1] == ' ') 
+        else if (line[0] == 'f' && line[1] == ' ')
         { // 读取面索引
             std::stringstream ss(line);
             std::vector<std::string> face(4);
-			face[3] = ""; // 确保第四个元素存在，避免越界
+            face[3] = ""; // 确保第四个元素存在，避免越界
             ss >> junk >> face[0] >> face[1] >> face[2] >> face[3];
-           
-            int v[4] = {0};
-            int vt[4] = {0};
-			int vn[4] = {0};
 
-            for(int i = 0; i < 4; i++) 
+            int v[4] = { 0 };
+            int vt[4] = { 0 };
+            int vn[4] = { 0 };
+
+            for (int i = 0; i < 4; i++)
             {
-                if (!face[i].empty()) 
+                if (!face[i].empty())
                 {
                     int j = 0;
                     while (face[i][j])
                     {
-                        if (face[i][j] == '/') 
+                        if (face[i][j] == '/')
                         {
-                            face[i][j] = ' '; 
+                            face[i][j] = ' ';
                         }
-						j++;
+                        j++;
                     }
                 }
-			}
+            }
             for (int i = 0; i < 4; i++)
             {
                 std::stringstream block(face[i]);
