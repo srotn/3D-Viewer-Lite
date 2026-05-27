@@ -159,9 +159,48 @@ void Engine3D::Fill(int lux, int luy, int rdx, int rdy, short transparency, COLO
 
 void Engine3D::Fill(triangle3D tri, short transparency, int color)
 {
-    // 可选：实现三角形填充，使用路径几何或简单的三角形填充
-    // 这里简单调用 DrawTriangle 绘制边框
-    DrawTriangle(tri, transparency, color);
+    if (!m_pRenderTarget) return;
+
+	//set brush opacity for this fill operation
+    COLORREF col = static_cast<COLORREF>(color);
+    ID2D1SolidColorBrush* brush = GetBrush(col);
+    if (!brush) return;
+
+    float oldOpacity = brush->GetOpacity();
+    brush->SetOpacity(transparency / 255.0f);
+
+	//create path geometry for the triangle
+    ID2D1PathGeometry* pGeometry = nullptr;
+    HRESULT hr = m_pD2DFactory->CreatePathGeometry(&pGeometry);
+    if (SUCCEEDED(hr))
+    {
+        ID2D1GeometrySink* pSink = nullptr;
+        hr = pGeometry->Open(&pSink);
+        if (SUCCEEDED(hr))
+        {
+			//convert triangle points to D2D1_POINT_2F
+            D2D1_POINT_2F points[3] = {
+                { (float)tri.point[0].x, (float)tri.point[0].y },
+                { (float)tri.point[1].x, (float)tri.point[1].y },
+                { (float)tri.point[2].x, (float)tri.point[2].y }
+            };
+
+            pSink->BeginFigure(points[0], D2D1_FIGURE_BEGIN_FILLED);
+            pSink->AddLine(points[1]);
+            pSink->AddLine(points[2]);
+            pSink->EndFigure(D2D1_FIGURE_END_CLOSED);
+
+            pSink->Close();
+        }
+        pSink->Release();
+
+        //fill
+        m_pRenderTarget->FillGeometry(pGeometry, brush);
+        pGeometry->Release();
+    }
+
+    brush->SetOpacity(oldOpacity);
+    
 }
 
 void Engine3D::Drawline(int x1, int y1, int x2, int y2, int width, COLORREF color)
@@ -193,16 +232,20 @@ void Engine3D::DrawTriangle(triangle3D tri, short transparency, int color)
 void Engine3D::DrawMesh3D(mesh3D Centered, float fElapsedTime)
 {
     mesh3D Projected = Centered;
+    mesh3D PreProcessed = {};
 
-	//process every triangle
+	//1 preprocessing: rotation, backface culling, projection
     for (int i = 0; i < Centered.tris.size(); i++)
     {
         //step1 rotation
         for (int j = 0; j < 3; j++)
         {
-            
+
             Projected.tris[i].point[j] = MtimesV(RotationYaw, Projected.tris[i].point[j]);
             Projected.tris[i].point[j] = MtimesV(RotationPitch, Projected.tris[i].point[j]);
+            Projected.tris[i].point[j].x *= zoom; // 放大顶点坐标以适应显示
+            Projected.tris[i].point[j].y *= zoom;
+            Projected.tris[i].point[j].z *= zoom;
         }
 
         //step2 backface culling
@@ -215,31 +258,57 @@ void Engine3D::DrawMesh3D(mesh3D Centered, float fElapsedTime)
             (Projected.tris[i].point[1].z - Projected.tris[i].point[0].z) * (Projected.tris[i].point[2].x - Projected.tris[i].point[0].x) - (Projected.tris[i].point[1].x - Projected.tris[i].point[0].x) * (Projected.tris[i].point[2].z - Projected.tris[i].point[0].z),
             (Projected.tris[i].point[1].x - Projected.tris[i].point[0].x) * (Projected.tris[i].point[2].y - Projected.tris[i].point[0].y) - (Projected.tris[i].point[1].y - Projected.tris[i].point[0].y) * (Projected.tris[i].point[2].x - Projected.tris[i].point[0].x)
         };
+		NormalVector = NormalVector.normalize();
         vector3D ViewVector = { px, py, pz + distance };
-        //double NormalValue = (Projected.tris[i].point[1].x - Projected.tris[i].point[0].x) * (Projected.tris[i].point[2].y - Projected.tris[i].point[0].y) - (Projected.tris[i].point[1].y - Projected.tris[i].point[0].y) * (Projected.tris[i].point[2].x - Projected.tris[i].point[0].x);
+
         double NormalValue = NormalVector.dot(ViewVector);
-        if (NormalValue >= 0)
+        if (NormalValue < 0)
         {
-			continue;
+            continue;
         }
+
+		//store NormalVector and ViewVector for lighting calculation in the future
+        Projected.tris[i].NormalVector = NormalVector;
+        Projected.tris[i].ViewVector = ViewVector;
 
         //step3 projection
         for (int j = 0; j < 3; j++)
         {
-			
-			double x = Projected.tris[i].point[j].x;
-			double y = Projected.tris[i].point[j].y;
+
+            double x = Projected.tris[i].point[j].x;
+            double y = Projected.tris[i].point[j].y;
             double z = Projected.tris[i].point[j].z;
             Projected.tris[i].point[j].x = 1.5 * unit * x * distance / (distance + z) + ScreenWidth() / 2.0;
             Projected.tris[i].point[j].y = 1.5 * unit * y * distance / (distance + z) + ScreenHeight() / 2.0;
         }
-        
-		//step4 draw wireframe
-        DrawTriangle(Projected.tris[i], 128, RGB(0, 0, 0));
-	
-        //step5 color & lighting
-        Fill(Projected.tris[i], 128, RGB(255, 255, 255));
-        
+		PreProcessed.tris.push_back(Projected.tris[i]);
+    }
+
+	//2 sorting by depth (Painter's algorithm)
+    std::sort(PreProcessed.tris.begin(), PreProcessed.tris.end(), [](const triangle3D& a, const triangle3D& b) {
+        double aDepth = (a.point[0].z + a.point[1].z + a.point[2].z) / 3.0;
+        double bDepth = (b.point[0].z + b.point[1].z + b.point[2].z) / 3.0;
+        return aDepth > bDepth;
+        });
+
+    //3 fill & lighting
+	for (int i = 0; i < PreProcessed.tris.size(); i++) 
+    {
+        double R_Intensity = 256 * PreProcessed.tris[i].NormalVector.dot(Rlight.normalize());
+        double G_Intensity = 256 * PreProcessed.tris[i].NormalVector.dot(Glight.normalize());
+        double B_Intensity = 256 * PreProcessed.tris[i].NormalVector.dot(Blight.normalize());
+
+		if (R_Intensity < 0) R_Intensity = 0;
+        if (G_Intensity < 0) G_Intensity = 0;
+        if (B_Intensity < 0) B_Intensity = 0;
+
+        Fill(PreProcessed.tris[i], 128, RGB(R_Intensity, G_Intensity, B_Intensity));
+    }
+
+    //4 draw wireframe
+    for (int i = 0; i < PreProcessed.tris.size(); i++)
+    {
+        DrawTriangle(PreProcessed.tris[i], 128, RGB(50, 50, 50));
     }
 }
 
@@ -313,9 +382,6 @@ bool Engine3D::OnUserCreate()
                 // 格式错误，跳出或忽略该行
                 break;
             }
-			point.x *= zoom; // 放大顶点坐标以适应显示
-			point.y *= zoom;
-			point.z *= zoom;
             points.push_back(point);
         }
         else if (type == 'f')
@@ -420,8 +486,8 @@ void Engine3D::Render()
 
 void Engine3D::UpdateYawAndPitch(int delta_x, int delta_y)
 {
-    yaw += static_cast<double>(delta_x) / static_cast<double>(400) * 3.1415926;
-    pitch -= static_cast<double>(delta_y) / static_cast<double>(400) * 3.1415926;
+    yaw -= static_cast<double>(delta_x) / static_cast<double>(400) * 3.1415926;
+    pitch += static_cast<double>(delta_y) / static_cast<double>(400) * 3.1415926;
 	// 限制 pitch 在 -90 到 +90 度之间
     if (pitch >= 3.14159 / 2) pitch = 3.14159 / 2;
     if (pitch <= -3.14159 / 2) pitch = -3.14159 / 2;

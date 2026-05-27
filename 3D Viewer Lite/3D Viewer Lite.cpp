@@ -37,6 +37,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         return 0;
 
     case WM_MOUSEMOVE:
+    {
         bool leftButtonDown = (wParam & MK_LBUTTON) != 0;
 
         if (leftButtonDown)
@@ -49,6 +50,22 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
         return 0;
     }
+    case WM_MOUSEWHEEL:
+    {
+        short zDelta = GET_WHEEL_DELTA_WPARAM(wParam);
+        
+        if (zDelta > 0) {
+            engine.zoom += 0.1;
+        }
+        else {
+            engine.zoom -= 0.1;
+        }
+
+        if (engine.zoom < 0.1) engine.zoom = 0.1;
+        return 0;
+    }
+    }
+
     return DefWindowProc(hwnd, uMsg, wParam, lParam);
 }
 

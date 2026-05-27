@@ -48,6 +48,9 @@ public:
 	char name[256] = "icosahedron.obj";
 	double fov = 60;
 	double zoom = 1;
+	vector3D Rlight = { -1, 1, 1 };
+	vector3D Glight = { -1, 1, 1 };
+	vector3D Blight = { -1, 1, 1 };
 	double distance;
 	double unit;
 	double yaw;
