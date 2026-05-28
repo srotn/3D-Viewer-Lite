@@ -39,9 +39,8 @@ struct vector3D
 
 struct triangle3D
 {
-    vector3D point[3];
+    int point[3];
     vector3D NormalVector;
-    vector3D ViewVector;
 };
 
 struct mesh3D

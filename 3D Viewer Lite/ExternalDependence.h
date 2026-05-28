@@ -1,6 +1,7 @@
 ﻿#pragma once
 #define NOMINMAX
 #include "Structs.h"
+#include <omp.h>
 #include <cmath>
 #include <d2d1.h>
 #include <fstream>

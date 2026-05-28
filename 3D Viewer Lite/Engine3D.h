@@ -23,7 +23,7 @@ public:
 
 	int ScreenWidth();
 
-	void Fill(triangle3D tri, short transparency, uint32_t color);
+	void Fill(triangle3D tri, short transparency, uint32_t color, int minClipY = 0, int maxClipY = -1);
 
 	void Fill(int lux, int luy, int rdx, int rdy, short transparency, uint32_t color);
 
@@ -33,11 +33,11 @@ public:
 
 	void DrawTriangle(triangle3D tri, short transparency, uint32_t color);
 
-	void DrawMesh3D(const mesh3D& Projected, float fElapsedTime);
+	void DrawMesh3D(float fElapsedTime);
 
 	inline vector3D MtimesV(const matrix& m, const vector3D& v);
 
-	mesh3D MoveToCenter(mesh3D mesh);
+	void MoveToCenter();
 
 	void Render();
 
@@ -63,11 +63,12 @@ public:
 	float unit;
 	float yaw;
 	float pitch;
-	bool IsWireFramePaint = true;
+	bool IsWireFramePaint = false;
 	bool IsFillAndLight = true;
 
 	matrix RotationYaw;
 	matrix RotationPitch;
+	matrix Rotation;
 	matrix Projection;
 
 	matrix Rx_positive = { {
@@ -97,6 +98,10 @@ public:
 		{-0.087156f, 0.0f,  0.996195f, 0.0f },
 		{ 0.0f,      0.0f,  0.0f,      1.0f }
 	} };
+
+	std::vector<vector3D> verts; // 所有顶点
+	std::vector<int> indices; //所有面索引 三个一组
+	std::vector<vector3D> transformedvectors; //投影后顶点
 
 private:
 

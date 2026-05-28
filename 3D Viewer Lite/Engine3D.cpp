@@ -160,15 +160,15 @@ void Engine3D::Fill(int lux, int luy, int rdx, int rdy, short transparency, uint
     }
 }
 
-void Engine3D::Fill(triangle3D tri, short transparency, uint32_t color)
+void Engine3D::Fill(triangle3D tri, short transparency, uint32_t color, int minClipY = 0, int maxClipY = -1)
 {
     uint32_t alpha = static_cast<uint32_t>(transparency) & 0xFF;
     uint32_t target = (alpha << 24) | (color & 0x00FFFFFF);
 
     // 1. 简写三个顶点，方便后续计算
-    vector3D A = tri.point[0];
-    vector3D B = tri.point[1];
-    vector3D C = tri.point[2];
+    vector3D A = transformedvectors[tri.point[0]];
+    vector3D B = transformedvectors[tri.point[1]];
+    vector3D C = transformedvectors[tri.point[2]];
 
     // 2. 计算三角形的包围盒（Bounding Box），减少不必要的全屏遍历
     int minX = std::max(0, (int)std::floor(std::min({ A.x, B.x, C.x })));
@@ -178,6 +178,7 @@ void Engine3D::Fill(triangle3D tri, short transparency, uint32_t color)
 
     // 重心坐标分母计算
     float denominator = (B.y - C.y) * (A.x - C.x) + (C.x - B.x) * (A.y - C.y);
+    float inv_denominator = 1.0f / denominator;
     if (std::abs(denominator) < 1e-6) return; // 退化三角形不绘制
 
     // 3. 遍历包围盒内的每一个像素
@@ -189,8 +190,8 @@ void Engine3D::Fill(triangle3D tri, short transparency, uint32_t color)
             float px = x + 0.5;
             float py = y + 0.5;
 
-            float alpha = ((B.y - C.y) * (px - C.x) + (C.x - B.x) * (py - C.y)) / denominator;
-            float beta = ((C.y - A.y) * (px - C.x) + (A.x - C.x) * (py - C.y)) / denominator;
+            float alpha = ((B.y - C.y) * (px - C.x) + (C.x - B.x) * (py - C.y)) * inv_denominator;
+            float beta = ((C.y - A.y) * (px - C.x) + (A.x - C.x) * (py - C.y)) * inv_denominator;
             float gamma = 1.0 - alpha - beta;
 
             // 4. 判断像素是否在三角形内部
@@ -419,65 +420,51 @@ void Engine3D::DrawTriangle(triangle3D tri, short transparency, uint32_t color)
     for (int i = 0; i < 3; ++i)
     {
         int j = (i + 1) % 3;
-        Drawline((int)tri.point[i].x, (int)tri.point[i].y,
-            (int)tri.point[j].x, (int)tri.point[j].y,
+        Drawline((int)transformedvectors[tri.point[i]].x, (int)transformedvectors[tri.point[i]].y,
+            (int)transformedvectors[tri.point[j]].x, (int)transformedvectors[tri.point[j]].y,
             255, color);
     }
 }
 
-void Engine3D::DrawMesh3D(const mesh3D& Centered, float fElapsedTime)
+void Engine3D::DrawMesh3D(float fElapsedTime)
 {
+    //points process
 
-    //1 preprocessing: rotation, backface culling, projection
-    for (int i = 0; i < Centered.tris.size(); i++)
+
+
+    for (int i = 0; i < verts.size(); i++)
     {
-        triangle3D tri = Centered.tris[i];
+        vector3D vpoint = verts[i];
+
         //step1 rotation
-        for (int j = 0; j < 3; j++)
-        {
+        vpoint = MtimesV(Rotation, vpoint);
+        vpoint.x *= zoom; // 放大顶点坐标以适应显示
+        vpoint.y *= zoom;
+        vpoint.z *= zoom;
+        
+        //step2 projection
+        float x = vpoint.x;
+        float y = vpoint.y;
+        float z = vpoint.z;
+        vpoint.x = 1.5 * unit * x * distance / (distance + z) + ScreenWidth() / 2.0;
+        vpoint.y = 1.5 * unit * y * distance / (distance + z) + ScreenHeight() / 2.0;
 
-            tri.point[j] = MtimesV(RotationYaw, tri.point[j]);
-            tri.point[j] = MtimesV(RotationPitch, tri.point[j]);
-            tri.point[j].x *= zoom; // 放大顶点坐标以适应显示
-            tri.point[j].y *= zoom;
-            tri.point[j].z *= zoom;
-        }
+        transformedvectors[i] = vpoint;
+    }
 
-        //step2 backface culling
-        float px = tri.point[1].x;
-        float py = tri.point[1].y;
-        float pz = tri.point[1].z;
+    for (int i = 0; i < meshInput.tris.size(); i++)
+    {
+        triangle3D tri = meshInput.tris[i];
 
-        vector3D NormalVector = {
-            (tri.point[1].y - tri.point[0].y) * (tri.point[2].z - tri.point[0].z) - (tri.point[1].z - tri.point[0].z) * (tri.point[2].y - tri.point[0].y),
-            (tri.point[1].z - tri.point[0].z) * (tri.point[2].x - tri.point[0].x) - (tri.point[1].x - tri.point[0].x) * (tri.point[2].z - tri.point[0].z),
-            (tri.point[1].x - tri.point[0].x) * (tri.point[2].y - tri.point[0].y) - (tri.point[1].y - tri.point[0].y) * (tri.point[2].x - tri.point[0].x)
-        };
-        NormalVector = NormalVector.normalize();
-        vector3D ViewVector = { px, py, pz + distance };
-
-        float NormalValue = NormalVector.dot(ViewVector);
+        float NormalValue = (transformedvectors[tri.point[1]].x - transformedvectors[tri.point[0]].x) * (transformedvectors[tri.point[2]].y - transformedvectors[tri.point[0]].y) - (transformedvectors[tri.point[1]].y - transformedvectors[tri.point[0]].y) * (transformedvectors[tri.point[2]].x - transformedvectors[tri.point[0]].x);
         if (NormalValue > 0)
         {
             continue;
         }
 
-        //store NormalVector and ViewVector for lighting calculation in the future
-        tri.NormalVector = NormalVector;
-        tri.ViewVector = ViewVector;
+        tri.NormalVector = MtimesV(Rotation, tri.NormalVector);
 
-        //step3 projection
-        for (int j = 0; j < 3; j++)
-        {
-
-            float x = tri.point[j].x;
-            float y = tri.point[j].y;
-            float z = tri.point[j].z;
-            tri.point[j].x = 1.5 * unit * x * distance / (distance + z) + ScreenWidth() / 2.0;
-            tri.point[j].y = 1.5 * unit * y * distance / (distance + z) + ScreenHeight() / 2.0;
-        }
-
-        //2 fill & lighting
+        // fill & lighting
         float R_Intensity = -256 * tri.NormalVector.dot(Rlight.normalize());
         float G_Intensity = -256 * tri.NormalVector.dot(Glight.normalize());
         float B_Intensity = -256 * tri.NormalVector.dot(Blight.normalize());
@@ -485,54 +472,37 @@ void Engine3D::DrawMesh3D(const mesh3D& Centered, float fElapsedTime)
         if (R_Intensity < 0) R_Intensity = 0;
         if (G_Intensity < 0) G_Intensity = 0;
         if (B_Intensity < 0) B_Intensity = 0;
-        if (IsFillAndLight) Fill(tri, 128, RGB(B_Intensity / 2, G_Intensity / 2, R_Intensity / 2));
 
-        //3 draw wireframe
+        if (IsFillAndLight) Fill(tri, 128, RGB(B_Intensity/3, G_Intensity/3, R_Intensity/3));
+
+        // draw wireframe
         if (IsWireFramePaint) DrawTriangle(tri, 128, 0x00ff0000);
     }
 }
 
-mesh3D Engine3D::MoveToCenter(mesh3D mesh)
+void Engine3D::MoveToCenter()
 {
     float cx = 0, cy = 0, cz = 0;
-    std::set<vector3D> allpoints;
 
-    for (const triangle3D& tri : mesh.tris)
-    {
-        for (int i = 0; i < 3; i++)
-        {
-            allpoints.insert(tri.point[i]);
-        }
-    }
-
-    if (allpoints.empty())
-    {
-        // 无顶点，直接返回原始网格（避免除以0）
-        return mesh;
-    }
-
-    for (const vector3D& point : allpoints)
+    for (const vector3D& point : verts)
     {
         cx += point.x;
         cy += point.y;
         cz += point.z;
     }
 
-    cx /= static_cast<float>(allpoints.size());
-    cy /= static_cast<float>(allpoints.size());
-    cz /= static_cast<float>(allpoints.size());
+    cx /= static_cast<float>(verts.size());
+    cy /= static_cast<float>(verts.size());
+    cz /= static_cast<float>(verts.size());
 
-    for (size_t i = 0; i < mesh.tris.size(); i++)
+    for (int i = 0; i < verts.size(); i++)
     {
-        for (int j = 0; j < 3; j++)
-        {
-            mesh.tris[i].point[j].x -= cx;
-            mesh.tris[i].point[j].y -= cy;
-            mesh.tris[i].point[j].z -= cz;
-        }
+        verts[i].x -= cx;
+        verts[i].y -= cy;
+        verts[i].z -= cz;
     }
-
-    return mesh;
+    
+    return;
 }
 
 bool Engine3D::OnUserCreate()
@@ -540,8 +510,22 @@ bool Engine3D::OnUserCreate()
     // read obj file
     meshInput = LoadFromObjectFile(name);
 
-    meshInput = MoveToCenter(meshInput);
+    MoveToCenter();
 
+    for (int i = 0; i < meshInput.tris.size(); i++)
+    {
+        triangle3D tri = meshInput.tris[i];
+
+        vector3D NormalVector = {
+            (verts[tri.point[1]].y - verts[tri.point[0]].y)* (verts[tri.point[2]].z - verts[tri.point[0]].z) - (verts[tri.point[1]].z - verts[tri.point[0]].z) * (verts[tri.point[2]].y - verts[tri.point[0]].y),
+            (verts[tri.point[1]].z - verts[tri.point[0]].z)* (verts[tri.point[2]].x - verts[tri.point[0]].x) - (verts[tri.point[1]].x - verts[tri.point[0]].x) * (verts[tri.point[2]].z - verts[tri.point[0]].z),
+            (verts[tri.point[1]].x - verts[tri.point[0]].x)* (verts[tri.point[2]].y - verts[tri.point[0]].y) - (verts[tri.point[1]].y - verts[tri.point[0]].y) * (verts[tri.point[2]].x - verts[tri.point[0]].x)
+        };
+
+        NormalVector = NormalVector.normalize();
+        meshInput.tris[i].NormalVector = NormalVector;
+    }
+    transformedvectors = verts;
     return true;
 }
 
@@ -565,7 +549,7 @@ bool Engine3D::OnUserUpdate(float fElapsedTime)
     }
     unit = sqrt(ScreenHeight() * ScreenHeight() + ScreenWidth() * ScreenWidth()) / 16;
 
-    DrawMesh3D(meshInput, fElapsedTime);
+    DrawMesh3D(fElapsedTime);
 
     return true;
 }
@@ -609,20 +593,28 @@ void Engine3D::CreateRotationMatrix(float yaw, float pitch)
     float sinYaw = sin(yaw);
     float cosPitch = cos(pitch);
     float sinPitch = sin(pitch);
-    RotationYaw = {
+    /*RotationYaw = {
         {
-        { cosYaw, 0, sinYaw, 0 },
-        { 0, 1, 0, 0 },
-        { -sinYaw, 0, cosYaw, 0 },
-        { 0, 0, 0, 1 }
+        { cosYaw,       0,          sinYaw,     0 },
+        { 0,            1,          0,          0 },
+        { -sinYaw,      0,          cosYaw,     0 },
+        { 0,            0,          0,          1 }
         }
     };
     RotationPitch = {
         {
-        { 1, 0, 0, 0 },
-        { 0, cosPitch, -sinPitch, 0 },
-        { 0, sinPitch, cosPitch, 0 },
-        { 0, 0, 0, 1 }
+        { 1,            0,          0,          0 },
+        { 0,            cosPitch,   -sinPitch,  0 },
+        { 0,            sinPitch,   cosPitch,   0 },
+        { 0,            0,          0,          1 }
+        }
+    };*/
+    Rotation = {
+        {
+        { cosYaw,               0,                  sinYaw,             0 },
+        { sinPitch * sinYaw,    cosPitch,           -sinPitch * cosYaw, 0 },
+        { -cosPitch * sinYaw,   sinPitch,           cosPitch * cosYaw,  0 },
+        { 0,                    0,                  0,                  1 }
         }
     };
 }
@@ -631,8 +623,7 @@ mesh3D Engine3D::LoadFromObjectFile(std::string filename)
 {
     std::ifstream f(filename);
     mesh3D mesh;
-    std::vector<vector3D> verts; // 暂存所有顶点
-
+    
     std::string line;
     while (std::getline(f, line))
     {
@@ -678,8 +669,8 @@ mesh3D Engine3D::LoadFromObjectFile(std::string filename)
                 block >> v[i] >> vt[i] >> vn[i];
             }
             // OBJ是从1开始索引的，C++ vector是从0开始的，所以要 -1
-            mesh.tris.push_back({ verts[v[0] - 1], verts[v[1] - 1], verts[v[2] - 1] });
-            if (v[3] != 0) mesh.tris.push_back({ verts[v[0] - 1], verts[v[2] - 1], verts[v[3] - 1] });
+            mesh.tris.push_back({v[0] - 1, v[1] - 1, v[2] - 1});
+            if (v[3] != 0) mesh.tris.push_back({v[0] - 1, v[2] - 1, v[3] - 1});
         }
     }
     return mesh;
