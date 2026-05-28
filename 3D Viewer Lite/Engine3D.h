@@ -66,8 +66,6 @@ public:
 	bool IsWireFramePaint = false;
 	bool IsFillAndLight = true;
 
-	matrix RotationYaw;
-	matrix RotationPitch;
 	matrix Rotation;
 	matrix Projection;
 

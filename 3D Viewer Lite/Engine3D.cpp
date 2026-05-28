@@ -165,52 +165,46 @@ void Engine3D::Fill(triangle3D tri, short transparency, uint32_t color, int minC
     uint32_t alpha = static_cast<uint32_t>(transparency) & 0xFF;
     uint32_t target = (alpha << 24) | (color & 0x00FFFFFF);
 
-    // 1. 简写三个顶点，方便后续计算
+    // 默认不传参时，maxClipY 自动设为屏幕最底端
+    if (maxClipY == -1) maxClipY = m_height - 1;
+
     vector3D A = transformedvectors[tri.point[0]];
     vector3D B = transformedvectors[tri.point[1]];
     vector3D C = transformedvectors[tri.point[2]];
 
-    // 2. 计算三角形的包围盒（Bounding Box），减少不必要的全屏遍历
+    // 【核心改动】：让包围盒的 Y 范围不仅裁剪到屏幕，还要裁剪到当前线程负责的 [minClipY, maxClipY] 区域
     int minX = std::max(0, (int)std::floor(std::min({ A.x, B.x, C.x })));
     int maxX = std::min(m_width - 1, (int)std::ceil(std::max({ A.x, B.x, C.x })));
-    int minY = std::max(0, (int)std::floor(std::min({ A.y, B.y, C.y })));
-    int maxY = std::min(m_height - 1, (int)std::ceil(std::max({ A.y, B.y, C.y })));
+    int minY = std::max(minClipY, (int)std::floor(std::min({ A.y, B.y, C.y })));
+    int maxY = std::min(maxClipY, (int)std::ceil(std::max({ A.y, B.y, C.y })));
 
-    // 重心坐标分母计算
+    // 如果整个三角形都不在这个线程的管辖范围内，直接退出
+    if (minY > maxY || minX > maxX) return;
+
     float denominator = (B.y - C.y) * (A.x - C.x) + (C.x - B.x) * (A.y - C.y);
+    if (std::abs(denominator) < 1e-6) return;
     float inv_denominator = 1.0f / denominator;
-    if (std::abs(denominator) < 1e-6) return; // 退化三角形不绘制
 
-    // 3. 遍历包围盒内的每一个像素
     for (int y = minY; y <= maxY; ++y)
     {
         for (int x = minX; x <= maxX; ++x)
         {
-            // 计算当前像素中心 (x + 0.5, y + 0.5) 的重心坐标 alpha, beta, gamma
-            float px = x + 0.5;
-            float py = y + 0.5;
+            float px = x + 0.5f;
+            float py = y + 0.5f;
 
             float alpha = ((B.y - C.y) * (px - C.x) + (C.x - B.x) * (py - C.y)) * inv_denominator;
             float beta = ((C.y - A.y) * (px - C.x) + (A.x - C.x) * (py - C.y)) * inv_denominator;
-            float gamma = 1.0 - alpha - beta;
+            float gamma = 1.0f - alpha - beta;
 
-            // 4. 判断像素是否在三角形内部
             if (alpha >= 0 && beta >= 0 && gamma >= 0)
             {
-                // 5. 【关键点】线性插值计算当前像素的深度 Z
                 float current_z = (float)(alpha * A.z + beta * B.z + gamma * C.z);
-
-                // 计算当前像素在缓冲区中的一维索引
                 int buffer_index = y * m_width + x;
 
-                // 6. ====== Z-Buffer 深度测试 ======
-                // 如果当前像素的深度小于（即更靠近相机）深度缓冲区里记录的值
+                // 【此时绝对安全】：因为不同的 y 严格属于不同的线程，绝无冲突！
                 if (current_z < m_depthBuffer[buffer_index])
                 {
-                    // 更新深度缓冲区
                     m_depthBuffer[buffer_index] = current_z;
-
-                    // 写入颜色缓冲区
                     m_frameBuffer[buffer_index] = target;
                 }
             }
@@ -429,9 +423,8 @@ void Engine3D::DrawTriangle(triangle3D tri, short transparency, uint32_t color)
 void Engine3D::DrawMesh3D(float fElapsedTime)
 {
     //points process
-
-
-
+    //parallel process
+#pragma omp parallel for
     for (int i = 0; i < verts.size(); i++)
     {
         vector3D vpoint = verts[i];
@@ -452,31 +445,57 @@ void Engine3D::DrawMesh3D(float fElapsedTime)
         transformedvectors[i] = vpoint;
     }
 
-    for (int i = 0; i < meshInput.tris.size(); i++)
+    int num_threads = omp_get_max_threads(); // 获取当前系统的最大可用CPU线程数
+    int strip_height = m_height / num_threads; // 计算每个线程分到的屏幕高度
+
+#pragma omp parallel for schedule(static, 1)
+    for (int t = 0; t < num_threads; t++)
     {
-        triangle3D tri = meshInput.tris[i];
+        // 计算当前线程负责的像素 Y 范围
+        int minClipY = t * strip_height;
+        int maxClipY = (t == num_threads - 1) ? (m_height - 1) : (minClipY + strip_height - 1);
 
-        float NormalValue = (transformedvectors[tri.point[1]].x - transformedvectors[tri.point[0]].x) * (transformedvectors[tri.point[2]].y - transformedvectors[tri.point[0]].y) - (transformedvectors[tri.point[1]].y - transformedvectors[tri.point[0]].y) * (transformedvectors[tri.point[2]].x - transformedvectors[tri.point[0]].x);
-        if (NormalValue > 0)
+        // 每个线程都通读一遍三角形，但各自只画自己裁剪区内的部分
+        for (int i = 0; i < (int)meshInput.tris.size(); i++)
         {
-            continue;
+            triangle3D tri = meshInput.tris[i];
+
+            // 背面剔除（由于 transformedvectors 在阶段1已全部写完且此时只读，多线程读取是安全的）
+            float NormalValue = (transformedvectors[tri.point[1]].x - transformedvectors[tri.point[0]].x) * (transformedvectors[tri.point[2]].y - transformedvectors[tri.point[0]].y) - (transformedvectors[tri.point[1]].y - transformedvectors[tri.point[0]].y) * (transformedvectors[tri.point[2]].x - transformedvectors[tri.point[0]].x);
+            if (NormalValue > 0) continue;
+
+            // 变换法线并计算光照（这里的 tri 是线程局部变量，安全）
+            tri.NormalVector = MtimesV(Rotation, tri.NormalVector);
+
+            float R_Intensity = -256 * tri.NormalVector.dot(Rlight.normalize());
+            float G_Intensity = -256 * tri.NormalVector.dot(Glight.normalize());
+            float B_Intensity = -256 * tri.NormalVector.dot(Blight.normalize());
+
+            if (R_Intensity < 0) R_Intensity = 0;
+            if (G_Intensity < 0) G_Intensity = 0;
+            if (B_Intensity < 0) B_Intensity = 0;
+
+            if (IsFillAndLight)
+            {
+                // 核心：调用带当前线程裁剪边界的 Fill
+                Fill(tri, 128, RGB(B_Intensity, G_Intensity, R_Intensity), minClipY, maxClipY);
+            }
         }
+    }
 
-        tri.NormalVector = MtimesV(Rotation, tri.NormalVector);
+    // ==========================================
+    // 阶段 3：绘制线框（保持单线程串行，避免多线程画线冲突）
+    // ==========================================
+    if (IsWireFramePaint)
+    {
+        for (int i = 0; i < (int)meshInput.tris.size(); i++)
+        {
+            triangle3D tri = meshInput.tris[i];
+            float NormalValue = (transformedvectors[tri.point[1]].x - transformedvectors[tri.point[0]].x) * (transformedvectors[tri.point[2]].y - transformedvectors[tri.point[0]].y) - (transformedvectors[tri.point[1]].y - transformedvectors[tri.point[0]].y) * (transformedvectors[tri.point[2]].x - transformedvectors[tri.point[0]].x);
+            if (NormalValue > 0) continue;
 
-        // fill & lighting
-        float R_Intensity = -256 * tri.NormalVector.dot(Rlight.normalize());
-        float G_Intensity = -256 * tri.NormalVector.dot(Glight.normalize());
-        float B_Intensity = -256 * tri.NormalVector.dot(Blight.normalize());
-
-        if (R_Intensity < 0) R_Intensity = 0;
-        if (G_Intensity < 0) G_Intensity = 0;
-        if (B_Intensity < 0) B_Intensity = 0;
-
-        if (IsFillAndLight) Fill(tri, 128, RGB(B_Intensity/3, G_Intensity/3, R_Intensity/3));
-
-        // draw wireframe
-        if (IsWireFramePaint) DrawTriangle(tri, 128, 0x00ff0000);
+            DrawTriangle(tri, 128, 0x00ff0000);
+        }
     }
 }
 
@@ -593,22 +612,6 @@ void Engine3D::CreateRotationMatrix(float yaw, float pitch)
     float sinYaw = sin(yaw);
     float cosPitch = cos(pitch);
     float sinPitch = sin(pitch);
-    /*RotationYaw = {
-        {
-        { cosYaw,       0,          sinYaw,     0 },
-        { 0,            1,          0,          0 },
-        { -sinYaw,      0,          cosYaw,     0 },
-        { 0,            0,          0,          1 }
-        }
-    };
-    RotationPitch = {
-        {
-        { 1,            0,          0,          0 },
-        { 0,            cosPitch,   -sinPitch,  0 },
-        { 0,            sinPitch,   cosPitch,   0 },
-        { 0,            0,          0,          1 }
-        }
-    };*/
     Rotation = {
         {
         { cosYaw,               0,                  sinYaw,             0 },
