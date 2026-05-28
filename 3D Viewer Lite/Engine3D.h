@@ -60,7 +60,7 @@ public:
 	vector3D Glight = { -1, 1, 1 };
 	vector3D Blight = { -1, 1, 1 };
 	float distance;
-	float unit;
+	float unit; 
 	float yaw;
 	float pitch;
 	bool IsWireFramePaint = false;

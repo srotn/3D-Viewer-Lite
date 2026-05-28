@@ -24,12 +24,36 @@
     <ClCompile Include="Engine3D.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="imgui.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="imgui_draw.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="imgui_impl_dx11.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="imgui_impl_win32.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="imgui_tables.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="imgui_widgets.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Engine3D.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="ExternalDependence.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="imgui_impl_dx11.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="imgui_impl_win32.h">
       <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>

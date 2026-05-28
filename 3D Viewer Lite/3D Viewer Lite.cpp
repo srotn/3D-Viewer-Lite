@@ -105,6 +105,34 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             engine.Rlight = engine.MtimesV(engine.Ry_negative, engine.Rlight);
             engine.Glight = engine.MtimesV(engine.Ry_negative, engine.Glight);
             engine.Blight = engine.MtimesV(engine.Ry_negative, engine.Blight);
+            break;
+        case '1':
+            engine.name = engine.testobjects[0];
+            engine.OnUserCreate();
+            break;
+        case '2':
+            engine.name = engine.testobjects[1];
+            engine.OnUserCreate();
+            break;
+        case '3':
+            engine.name = engine.testobjects[2];
+            engine.OnUserCreate();
+            break;
+        case '4':
+
+            break;
+        case '5':
+
+            break;
+        case '6':
+
+            break;
+        case '7':
+
+            break;
+        case '8':
+
+            break;
         }
         return 0;
     }

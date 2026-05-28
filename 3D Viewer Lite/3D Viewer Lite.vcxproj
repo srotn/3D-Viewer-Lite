@@ -130,11 +130,19 @@
   <ItemGroup>
     <ClCompile Include="3D Viewer Lite.cpp" />
     <ClCompile Include="Engine3D.cpp" />
+    <ClCompile Include="imgui.cpp" />
+    <ClCompile Include="imgui_draw.cpp" />
+    <ClCompile Include="imgui_impl_dx11.cpp" />
+    <ClCompile Include="imgui_impl_win32.cpp" />
+    <ClCompile Include="imgui_tables.cpp" />
+    <ClCompile Include="imgui_widgets.cpp" />
     <ClCompile Include="Structs.h" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Engine3D.h" />
     <ClInclude Include="ExternalDependence.h" />
+    <ClInclude Include="imgui_impl_dx11.h" />
+    <ClInclude Include="imgui_impl_win32.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

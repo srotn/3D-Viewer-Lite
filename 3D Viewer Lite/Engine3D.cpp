@@ -467,42 +467,92 @@ void Engine3D::DrawMesh3D(float fElapsedTime)
         }
     }
 
-    int num_threads = 1; //omp_get_max_threads(); // 获取当前系统的最大可用CPU线程数
+    int num_threads = omp_get_max_threads(); // 获取当前系统的最大可用CPU线程数
     int strip_height = m_height / num_threads; // 计算每个线程分到的屏幕高度
-    // 2. 测量第二阶段：核心多线程光栅化循环
+
+    // =================================================================
+    // 终极优化：二维无锁并行分箱架构
+    // =================================================================
+
+    struct PreparedTriangle {
+        triangle3D tri;
+        uint32_t color;
+    };
+
+    // 二维任务箱：localBoxes[几何线程ID][目标屏幕条带t]
+    // 每个线程只写自己专属的一行，绝对不会产生数据竞争(Data Race)，因此不需要任何锁！
+    std::vector<std::vector<std::vector<PreparedTriangle>>> localBoxes(
+        num_threads, std::vector<std::vector<PreparedTriangle>>(num_threads)
+    );
+
     {
-        ProfileTimer t_raster("   [DrawMesh3D] P2: Multi-Thread Rasterization Loop");
-#pragma omp parallel for schedule(static, 1)
+        ProfileTimer t_binning("   [DrawMesh3D] P2-1: Geometry & Binning Pass");
+
+        // 【优化一】把灯光的归一化（包含昂贵的 sqrt 耗时操作）提到循环外面！一帧只算一次
+        vector3D rLightNorm = Rlight.normalize();
+        vector3D gLightNorm = Glight.normalize();
+        vector3D bLightNorm = Blight.normalize();
+
+        // 【优化二】让几何与分箱阶段也享受多线程并发！
+#pragma omp parallel for
+        for (int i = 0; i < (int)meshInput.tris.size(); i++)
+        {
+            int tid = omp_get_thread_num(); // 获取当前执行任务的线程 ID
+            triangle3D tri = meshInput.tris[i];
+
+            // 1. 背面剔除
+            float NormalValue = (transformedvectors[tri.point[1]].x - transformedvectors[tri.point[0]].x) * (transformedvectors[tri.point[2]].y - transformedvectors[tri.point[0]].y) - (transformedvectors[tri.point[1]].y - transformedvectors[tri.point[0]].y) * (transformedvectors[tri.point[2]].x - transformedvectors[tri.point[0]].x);
+            if (NormalValue > 0) continue;
+
+            // 2. 光照计算（使用外面算好的归一化向量，纯乘加运算，极快）
+            tri.NormalVector = MtimesV(Rotation, tri.NormalVector);
+
+            float R_Intensity = -256 * tri.NormalVector.dot(rLightNorm);
+            float G_Intensity = -256 * tri.NormalVector.dot(gLightNorm);
+            float B_Intensity = -256 * tri.NormalVector.dot(bLightNorm);
+
+            if (R_Intensity < 0) R_Intensity = 0;
+            if (G_Intensity < 0) G_Intensity = 0;
+            if (B_Intensity < 0) B_Intensity = 0;
+            uint32_t finalColor = RGB(B_Intensity / 3, G_Intensity / 3, R_Intensity / 3);
+
+            // 3. 计算该三角形在屏幕上的实际 Y 轴边界
+            float ay = transformedvectors[tri.point[0]].y;
+            float by = transformedvectors[tri.point[1]].y;
+            float cy = transformedvectors[tri.point[2]].y;
+            int triMinY = (int)std::floor(std::min({ ay, by, cy }));
+            int triMaxY = (int)std::ceil(std::max({ ay, by, cy }));
+
+            // 【优化三】用 O(1) 的数学计算直接定位目标条带范围，彻底干掉整个屏幕宽度的循环判断
+            int start_t = std::max(0, triMinY / strip_height);
+            int end_t = std::min(num_threads - 1, triMaxY / strip_height);
+
+            PreparedTriangle pt = { tri, finalColor };
+            for (int t = start_t; t <= end_t; t++)
+            {
+                // 往自己线程对应的私有格子里塞数据，无锁并发，内存吞吐量拉满
+                localBoxes[tid][t].push_back(pt);
+            }
+        }
+    }
+
+    // 2. 纯净的并行光栅化阶段
+    if (IsFillAndLight)
+    {
+        ProfileTimer t_raster_pure("   [DrawMesh3D] P2-2: Pure Multi-Thread Rasterization");
+
+#pragma omp parallel for schedule(dynamic, 1)
         for (int t = 0; t < num_threads; t++)
         {
-            // 计算当前线程负责的像素 Y 范围
             int minClipY = t * strip_height;
             int maxClipY = (t == num_threads - 1) ? (m_height - 1) : (minClipY + strip_height - 1);
 
-            // 每个线程都通读一遍三角形，但各自只画自己裁剪区内的部分
-            for (int i = 0; i < (int)meshInput.tris.size(); i++)
+            // 当前渲染线程 t，去收集所有几何线程 tid 投递到第 t 个条带里的三角形
+            for (int tid = 0; tid < num_threads; tid++)
             {
-                triangle3D tri = meshInput.tris[i];
-
-                // 背面剔除（由于 transformedvectors 在阶段1已全部写完且此时只读，多线程读取是安全的）
-                float NormalValue = (transformedvectors[tri.point[1]].x - transformedvectors[tri.point[0]].x) * (transformedvectors[tri.point[2]].y - transformedvectors[tri.point[0]].y) - (transformedvectors[tri.point[1]].y - transformedvectors[tri.point[0]].y) * (transformedvectors[tri.point[2]].x - transformedvectors[tri.point[0]].x);
-                if (NormalValue > 0) continue;
-
-                // 变换法线并计算光照（这里的 tri 是线程局部变量，安全）
-                tri.NormalVector = MtimesV(Rotation, tri.NormalVector);
-
-                float R_Intensity = -256 * tri.NormalVector.dot(Rlight.normalize());
-                float G_Intensity = -256 * tri.NormalVector.dot(Glight.normalize());
-                float B_Intensity = -256 * tri.NormalVector.dot(Blight.normalize());
-
-                if (R_Intensity < 0) R_Intensity = 0;
-                if (G_Intensity < 0) G_Intensity = 0;
-                if (B_Intensity < 0) B_Intensity = 0;
-
-                if (IsFillAndLight)
+                for (size_t i = 0; i < localBoxes[tid][t].size(); i++)
                 {
-                    // 核心：调用带当前线程裁剪边界的 Fill
-                    Fill(tri, 128, RGB(B_Intensity / 3, G_Intensity / 3, R_Intensity / 3), minClipY, maxClipY);
+                    Fill(localBoxes[tid][t][i].tri, 128, localBoxes[tid][t][i].color, minClipY, maxClipY);
                 }
             }
         }
