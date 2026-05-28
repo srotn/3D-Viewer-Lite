@@ -135,8 +135,6 @@ int Engine3D::ScreenWidth()
     return m_width;
 }
 
-//----------------------------------------------------
-//核心渲染工作区域
 void Engine3D::Fill(short transparency, uint32_t color)
 {
     //color mixing
@@ -426,7 +424,6 @@ void Engine3D::DrawTriangle(triangle3D tri, short transparency, uint32_t color)
             255, color);
     }
 }
-//----------------------------------------------------
 
 void Engine3D::DrawMesh3D(const mesh3D& Centered, float fElapsedTime)
 {
@@ -480,22 +477,7 @@ void Engine3D::DrawMesh3D(const mesh3D& Centered, float fElapsedTime)
             tri.point[j].y = 1.5 * unit * y * distance / (distance + z) + ScreenHeight() / 2.0;
         }
 
-        //2 sorting by depth (Painter's algorithm)
-        /*std::vector<std::pair<float, size_t>> depthIndices;
-        depthIndices.reserve(PreProcessed.tris.size());
-
-        for (size_t i = 0; i < PreProcessed.tris.size(); i++)
-        {
-            float aDepth = (PreProcessed.tris[i].point[0].z + PreProcessed.tris[i].point[1].z + PreProcessed.tris[i].point[2].z) / 3.0;
-            depthIndices.push_back({ aDepth, i });
-        }
-
-        std::sort(depthIndices.begin(), depthIndices.end(), [](const auto& a, const auto& b) {
-            return a.first > b.first;
-            });*/
-
-            //3 fill & lighting
-
+        //2 fill & lighting
         float R_Intensity = -256 * tri.NormalVector.dot(Rlight.normalize());
         float G_Intensity = -256 * tri.NormalVector.dot(Glight.normalize());
         float B_Intensity = -256 * tri.NormalVector.dot(Blight.normalize());
@@ -503,10 +485,10 @@ void Engine3D::DrawMesh3D(const mesh3D& Centered, float fElapsedTime)
         if (R_Intensity < 0) R_Intensity = 0;
         if (G_Intensity < 0) G_Intensity = 0;
         if (B_Intensity < 0) B_Intensity = 0;
-        Fill(tri, 128, RGB(B_Intensity / 2, G_Intensity / 2, R_Intensity / 2));
+        if (IsFillAndLight) Fill(tri, 128, RGB(B_Intensity / 2, G_Intensity / 2, R_Intensity / 2));
 
-        //4 draw wireframe
-        //DrawTriangle(tri, 128, 0x00ff0000);
+        //3 draw wireframe
+        if (IsWireFramePaint) DrawTriangle(tri, 128, 0x00ff0000);
     }
 }
 
@@ -701,4 +683,14 @@ mesh3D Engine3D::LoadFromObjectFile(std::string filename)
         }
     }
     return mesh;
+}
+
+void Engine3D::FovPlus()
+{
+    if (fov < 150)fov += 5;
+}
+
+void Engine3D::FovMinus()
+{
+    if (fov > 0)fov -= 5;
 }

@@ -38,9 +38,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
     case WM_MOUSEMOVE:
     {
-        bool leftButtonDown = (wParam & MK_LBUTTON) != 0;
+        bool rightButtonDown = (wParam & MK_RBUTTON) != 0;
 
-        if (leftButtonDown)
+        if (rightButtonDown)
         {
             engine.UpdateYawAndPitch(LOWORD(lParam) - mouse_x, HIWORD(lParam) - mouse_y);
         }
@@ -55,15 +55,58 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         short zDelta = GET_WHEEL_DELTA_WPARAM(wParam);
 
         if (zDelta > 0) {
-            engine.zoom += 0.1;
+            engine.zoom *= 1.1;
         }
         else {
-            engine.zoom -= 0.1;
+            engine.zoom /= 1.1;
         }
 
         if (engine.zoom < 0.1) engine.zoom = 0.1;
         return 0;
     }
+    case WM_KEYDOWN:
+        switch (wParam)
+        {
+        case VK_PRIOR:
+            engine.FovPlus();
+            break;
+
+        case VK_NEXT:
+            engine.FovMinus();
+            break;
+
+        case 'L':
+            engine.IsWireFramePaint ^= true;
+            break;
+
+        case 'F':
+            engine.IsFillAndLight ^= true;
+            break;
+
+        case VK_UP:
+            engine.Rlight = engine.MtimesV(engine.Rx_positive, engine.Rlight);
+            engine.Glight = engine.MtimesV(engine.Rx_positive, engine.Glight);
+            engine.Blight = engine.MtimesV(engine.Rx_positive, engine.Blight);
+            break;
+
+        case VK_DOWN:
+            engine.Rlight = engine.MtimesV(engine.Rx_negative, engine.Rlight);
+            engine.Glight = engine.MtimesV(engine.Rx_negative, engine.Glight);
+            engine.Blight = engine.MtimesV(engine.Rx_negative, engine.Blight);
+            break;
+
+        case VK_RIGHT:
+            engine.Rlight = engine.MtimesV(engine.Ry_positive, engine.Rlight);
+            engine.Glight = engine.MtimesV(engine.Ry_positive, engine.Glight);
+            engine.Blight = engine.MtimesV(engine.Ry_positive, engine.Blight);
+            break;
+
+        case VK_LEFT:
+            engine.Rlight = engine.MtimesV(engine.Ry_negative, engine.Rlight);
+            engine.Glight = engine.MtimesV(engine.Ry_negative, engine.Glight);
+            engine.Blight = engine.MtimesV(engine.Ry_negative, engine.Blight);
+        }
+        return 0;
     }
 
     return DefWindowProc(hwnd, uMsg, wParam, lParam);
@@ -104,6 +147,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
         // 所有消息处理完毕后，立即渲染一帧（无上限帧率）
         engine.Render();
+
     }
     return msg.wParam;
 }

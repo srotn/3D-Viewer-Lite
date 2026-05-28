@@ -47,9 +47,13 @@ public:
 
 	mesh3D LoadFromObjectFile(std::string filename);
 
+	void FovPlus();
 
-	char name[256] = "Old Teapot.obj";
-	//char name[256] = "icosahedron.obj";
+	void FovMinus();
+
+
+	std::vector<std::string> testobjects = { "Skull.obj", "Old Teapot.obj", "icosahedron.obj" };
+	std::string name = testobjects[1];
 	float fov = 60;
 	float zoom = 1;
 	vector3D Rlight = { -1, 1, 1 };
@@ -59,10 +63,40 @@ public:
 	float unit;
 	float yaw;
 	float pitch;
+	bool IsWireFramePaint = true;
+	bool IsFillAndLight = true;
 
 	matrix RotationYaw;
 	matrix RotationPitch;
 	matrix Projection;
+
+	matrix Rx_positive = { {
+	{ 1.0f,  0.0f,      0.0f,      0.0f },
+	{ 0.0f,  0.996195f, 0.087156f, 0.0f },
+	{ 0.0f, -0.087156f, 0.996195f, 0.0f },
+	{ 0.0f,  0.0f,      0.0f,      1.0f }
+	} };
+
+	matrix Rx_negative = { {
+		{ 1.0f,  0.0f,      0.0f,      0.0f },
+		{ 0.0f,  0.996195f, -0.087156f,0.0f },
+		{ 0.0f,  0.087156f, 0.996195f, 0.0f },
+		{ 0.0f,  0.0f,      0.0f,      1.0f }
+	} };
+
+	matrix Ry_positive = { {
+		{ 0.996195f, 0.0f, -0.087156f, 0.0f },
+		{ 0.0f,      1.0f,  0.0f,      0.0f },
+		{ 0.087156f, 0.0f,  0.996195f, 0.0f },
+		{ 0.0f,      0.0f,  0.0f,      1.0f }
+	} };
+
+	matrix Ry_negative = { {
+		{ 0.996195f, 0.0f,  0.087156f, 0.0f },
+		{ 0.0f,      1.0f,  0.0f,      0.0f },
+		{-0.087156f, 0.0f,  0.996195f, 0.0f },
+		{ 0.0f,      0.0f,  0.0f,      1.0f }
+	} };
 
 private:
 
