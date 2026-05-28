@@ -1,5 +1,24 @@
 ﻿#include "Engine3D.h"
 
+// 一个简单的内联计时助手
+struct ProfileTimer {
+    std::string name;
+    std::chrono::high_resolution_clock::time_point start;
+
+    ProfileTimer(const std::string& sectionName) : name(sectionName) {
+        start = std::chrono::high_resolution_clock::now();
+    }
+
+    ~ProfileTimer() {
+        auto end = std::chrono::high_resolution_clock::now();
+        float duration = std::chrono::duration<float, std::milli>(end - start).count();
+
+        // 格式化输出到 Visual Studio 的输出窗口
+        std::string output = "[Profile] " + name + ": " + std::to_string(duration) + " ms\n";
+        OutputDebugStringA(output.c_str());
+    }
+};
+
 Engine3D::Engine3D()
 {
 }
@@ -160,7 +179,7 @@ void Engine3D::Fill(int lux, int luy, int rdx, int rdy, short transparency, uint
     }
 }
 
-void Engine3D::Fill(triangle3D tri, short transparency, uint32_t color, int minClipY = 0, int maxClipY = -1)
+void Engine3D::Fill(triangle3D tri, short transparency, uint32_t color, int minClipY, int maxClipY)
 {
     uint32_t alpha = static_cast<uint32_t>(transparency) & 0xFF;
     uint32_t target = (alpha << 24) | (color & 0x00FFFFFF);
@@ -422,63 +441,69 @@ void Engine3D::DrawTriangle(triangle3D tri, short transparency, uint32_t color)
 
 void Engine3D::DrawMesh3D(float fElapsedTime)
 {
-    //points process
-    //parallel process
-#pragma omp parallel for
-    for (int i = 0; i < verts.size(); i++)
     {
-        vector3D vpoint = verts[i];
+        ProfileTimer t_geom("   [DrawMesh3D] P1: Vertex Transform & Projection");
+        //points process
+        //parallel process
+#pragma omp parallel for
+        for (int i = 0; i < verts.size(); i++)
+        {
+            vector3D vpoint = verts[i];
 
-        //step1 rotation
-        vpoint = MtimesV(Rotation, vpoint);
-        vpoint.x *= zoom; // 放大顶点坐标以适应显示
-        vpoint.y *= zoom;
-        vpoint.z *= zoom;
-        
-        //step2 projection
-        float x = vpoint.x;
-        float y = vpoint.y;
-        float z = vpoint.z;
-        vpoint.x = 1.5 * unit * x * distance / (distance + z) + ScreenWidth() / 2.0;
-        vpoint.y = 1.5 * unit * y * distance / (distance + z) + ScreenHeight() / 2.0;
+            //step1 rotation
+            vpoint = MtimesV(Rotation, vpoint);
+            vpoint.x *= zoom; // 放大顶点坐标以适应显示
+            vpoint.y *= zoom;
+            vpoint.z *= zoom;
 
-        transformedvectors[i] = vpoint;
+            //step2 projection
+            float x = vpoint.x;
+            float y = vpoint.y;
+            float z = vpoint.z;
+            vpoint.x = 1.5 * unit * x * distance / (distance + z) + ScreenWidth() / 2.0;
+            vpoint.y = 1.5 * unit * y * distance / (distance + z) + ScreenHeight() / 2.0;
+
+            transformedvectors[i] = vpoint;
+        }
     }
 
-    int num_threads = omp_get_max_threads(); // 获取当前系统的最大可用CPU线程数
+    int num_threads = 1; //omp_get_max_threads(); // 获取当前系统的最大可用CPU线程数
     int strip_height = m_height / num_threads; // 计算每个线程分到的屏幕高度
-
-#pragma omp parallel for schedule(static, 1)
-    for (int t = 0; t < num_threads; t++)
+    // 2. 测量第二阶段：核心多线程光栅化循环
     {
-        // 计算当前线程负责的像素 Y 范围
-        int minClipY = t * strip_height;
-        int maxClipY = (t == num_threads - 1) ? (m_height - 1) : (minClipY + strip_height - 1);
-
-        // 每个线程都通读一遍三角形，但各自只画自己裁剪区内的部分
-        for (int i = 0; i < (int)meshInput.tris.size(); i++)
+        ProfileTimer t_raster("   [DrawMesh3D] P2: Multi-Thread Rasterization Loop");
+#pragma omp parallel for schedule(static, 1)
+        for (int t = 0; t < num_threads; t++)
         {
-            triangle3D tri = meshInput.tris[i];
+            // 计算当前线程负责的像素 Y 范围
+            int minClipY = t * strip_height;
+            int maxClipY = (t == num_threads - 1) ? (m_height - 1) : (minClipY + strip_height - 1);
 
-            // 背面剔除（由于 transformedvectors 在阶段1已全部写完且此时只读，多线程读取是安全的）
-            float NormalValue = (transformedvectors[tri.point[1]].x - transformedvectors[tri.point[0]].x) * (transformedvectors[tri.point[2]].y - transformedvectors[tri.point[0]].y) - (transformedvectors[tri.point[1]].y - transformedvectors[tri.point[0]].y) * (transformedvectors[tri.point[2]].x - transformedvectors[tri.point[0]].x);
-            if (NormalValue > 0) continue;
-
-            // 变换法线并计算光照（这里的 tri 是线程局部变量，安全）
-            tri.NormalVector = MtimesV(Rotation, tri.NormalVector);
-
-            float R_Intensity = -256 * tri.NormalVector.dot(Rlight.normalize());
-            float G_Intensity = -256 * tri.NormalVector.dot(Glight.normalize());
-            float B_Intensity = -256 * tri.NormalVector.dot(Blight.normalize());
-
-            if (R_Intensity < 0) R_Intensity = 0;
-            if (G_Intensity < 0) G_Intensity = 0;
-            if (B_Intensity < 0) B_Intensity = 0;
-
-            if (IsFillAndLight)
+            // 每个线程都通读一遍三角形，但各自只画自己裁剪区内的部分
+            for (int i = 0; i < (int)meshInput.tris.size(); i++)
             {
-                // 核心：调用带当前线程裁剪边界的 Fill
-                Fill(tri, 128, RGB(B_Intensity, G_Intensity, R_Intensity), minClipY, maxClipY);
+                triangle3D tri = meshInput.tris[i];
+
+                // 背面剔除（由于 transformedvectors 在阶段1已全部写完且此时只读，多线程读取是安全的）
+                float NormalValue = (transformedvectors[tri.point[1]].x - transformedvectors[tri.point[0]].x) * (transformedvectors[tri.point[2]].y - transformedvectors[tri.point[0]].y) - (transformedvectors[tri.point[1]].y - transformedvectors[tri.point[0]].y) * (transformedvectors[tri.point[2]].x - transformedvectors[tri.point[0]].x);
+                if (NormalValue > 0) continue;
+
+                // 变换法线并计算光照（这里的 tri 是线程局部变量，安全）
+                tri.NormalVector = MtimesV(Rotation, tri.NormalVector);
+
+                float R_Intensity = -256 * tri.NormalVector.dot(Rlight.normalize());
+                float G_Intensity = -256 * tri.NormalVector.dot(Glight.normalize());
+                float B_Intensity = -256 * tri.NormalVector.dot(Blight.normalize());
+
+                if (R_Intensity < 0) R_Intensity = 0;
+                if (G_Intensity < 0) G_Intensity = 0;
+                if (B_Intensity < 0) B_Intensity = 0;
+
+                if (IsFillAndLight)
+                {
+                    // 核心：调用带当前线程裁剪边界的 Fill
+                    Fill(tri, 128, RGB(B_Intensity / 3, G_Intensity / 3, R_Intensity / 3), minClipY, maxClipY);
+                }
             }
         }
     }
@@ -488,6 +513,7 @@ void Engine3D::DrawMesh3D(float fElapsedTime)
     // ==========================================
     if (IsWireFramePaint)
     {
+        ProfileTimer t_wire("   [DrawMesh3D] P3: Serial WireFrame Paint");
         for (int i = 0; i < (int)meshInput.tris.size(); i++)
         {
             triangle3D tri = meshInput.tris[i];
@@ -575,6 +601,9 @@ bool Engine3D::OnUserUpdate(float fElapsedTime)
 
 void Engine3D::Render()
 {
+    // 整个 Render 函数的生命周期，统计单帧的总总耗时
+    ProfileTimer t_total("=== Total Render Frame ===");
+    
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
     float deltaTime = 0.016f;   // 默认值
@@ -591,9 +620,23 @@ void Engine3D::Render()
     }
     m_lastTime = now;
 
-    BeginDraw();
-    OnUserUpdate(deltaTime);
-    EndDraw();
+    // 1. 监控 BeginDraw (清空画布与 Z-Buffer 耗时)
+    {
+        ProfileTimer t_begin("1. BeginDraw (Memory Buffer Clear)");
+        BeginDraw();
+    }
+
+    // 2. 监控核心逻辑、几何计算与多线程光栅化 (调用 DrawMesh3D 的地方)
+    {
+        ProfileTimer t_update("2. OnUserUpdate (Entire Logic & Rasterization)");
+        OnUserUpdate(deltaTime);
+    }
+
+    // 3. 监控 EndDraw (把内存像素 CopyFromMemory 提交到显卡并 Present)
+    {
+        ProfileTimer t_end("3. EndDraw (Upload Buffer to GPU & Present)");
+        EndDraw();
+    }
 }
 
 void Engine3D::UpdateYawAndPitch(int delta_x, int delta_y)
