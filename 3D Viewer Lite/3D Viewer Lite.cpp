@@ -149,7 +149,8 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
     return DefWindowProc(hwnd, uMsg, wParam, lParam);
 }
 
-void InitDX11Device(HWND hwnd) {
+void InitDX11Device(HWND hwnd) 
+{
     DXGI_SWAP_CHAIN_DESC sd = {};
     sd.BufferCount = 1;
     sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -162,8 +163,9 @@ void InitDX11Device(HWND hwnd) {
         D3D11_SDK_VERSION, &sd, &pSwapChain, &pd3dDevice, NULL, &pd3dContext);
 }
 
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
-    // 窗口注册与创建（不变）
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) 
+{
+    // 窗口注册与创建保持不变
     const wchar_t CLASS_NAME[] = L"3DViewerWindow";
     WNDCLASS wc = {};
     wc.lpfnWndProc = WindowProc;
@@ -180,46 +182,50 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     ShowWindow(hwnd, nCmdShow);
     UpdateWindow(hwnd);
 
-    InitDX11Device(hwnd);
+    // 【此时 engine 在 WM_CREATE 中已经通过 Initialize 自动把 DX11 设备创建好了】
 
+    // 初始化 ImGui 上下文
     ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO(); (void)io;
+
+    // 直接使用 engine 内部创建好的 DX11 设备和上下文初始化 ImGui 后端
     ImGui_ImplWin32_Init(hwnd);
-    ImGui_ImplDX11_Init(pd3dDevice, pd3dContext);
+    ImGui_ImplDX11_Init(engine.pd3dDevice, engine.pd3dContext);
 
     MSG msg = {};
     while (true)
     {
-        // 处理所有等待的消息（非阻塞）
         while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
         {
-            if (msg.message == WM_QUIT)
-            {
-                // 返回最终退出代码
-                return (int)msg.wParam;
-            }
+            if (msg.message == WM_QUIT) return (int)msg.wParam;
             TranslateMessage(&msg);
             DispatchMessage(&msg);
         }
 
-        // 所有消息处理完毕后，立即渲染一帧（无上限帧率）
+        // 1. 渲染 3D 场景（数据此时被 D2D 推送到了 DX11 后缓冲区中）
         engine.Render();
 
-        // 2. ImGui 渲染 (在引擎渲染后，覆盖在最上方)
+        // 2. 激活 DX11 渲染目标视图，让 ImGui 明确绘制的目标画布
+        engine.pd3dContext->OMSetRenderTargets(1, &engine.pmainRenderTargetView, NULL);
+
+        // 3. ImGui 驱动新帧
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
 
-        // --- 在这里添加你的 UI 代码 ---
+        // --- 你的 UI 面板代码 ---
         ImGui::Begin("Engine Debug");
-        // 1. 基础性能监控
         ImGui::Text("Application average %.3f ms/frame", 1000.0f / ImGui::GetIO().Framerate);
         ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
         ImGui::End();
-        // ----------------------------
+        // ----------------------
 
+        // 4. 将 UI 画面同样绘制到 DX11 后缓冲区中（实现完美叠加）
         ImGui::Render();
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 
+        // 5. 【终极一枪】：由 DX11 交换链统一垂直同步刷新到屏幕上！
+        engine.pSwapChain->Present(1, 0);
     }
     return msg.wParam;
 }

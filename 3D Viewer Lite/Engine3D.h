@@ -51,7 +51,6 @@ public:
 
 	void FovMinus();
 
-
 	std::vector<std::string> testobjects = { "Skull.obj", "Old Teapot.obj", "icosahedron.obj", "little fan.obj", "111.obj", "3d_Isometric_Cube_Designs.obj"};
 	std::string name = testobjects[1];
 	float fov = 60;
@@ -101,11 +100,17 @@ public:
 	std::vector<int> indices; //所有面索引 三个一组
 	std::vector<vector3D> transformedvectors; //投影后顶点
 
+	// ====== 新增：暴露给 ImGui 使用的 DX11 核心接口 ======
+	ID3D11Device* pd3dDevice = nullptr;
+	ID3D11DeviceContext* pd3dContext = nullptr;
+	IDXGISwapChain* pSwapChain = nullptr;
+	ID3D11RenderTargetView* pmainRenderTargetView = nullptr;
+
 private:
 
 	// Direct2D 核心对象
 	ID2D1Factory* m_pD2DFactory = nullptr;
-	ID2D1HwndRenderTarget* m_pRenderTarget = nullptr;
+	ID2D1RenderTarget* m_pRenderTarget = nullptr;
 
 	// 屏幕缓冲区
 	std::vector<uint32_t> m_frameBuffer;

@@ -34,46 +34,74 @@ bool Engine3D::Initialize(HWND hwnd)
 {
     m_hwnd = hwnd;
 
-    // 只在尚未创建 factory 时创建
+    RECT rc;
+    GetClientRect(hwnd, &rc);
+    m_width = rc.right - rc.left;
+    m_height = rc.bottom - rc.top;
+
+    // 1. 创建 DX11 设备与交换链
+    if (!pd3dDevice)
+    {
+        DXGI_SWAP_CHAIN_DESC sd = {};
+        sd.BufferCount = 1;
+        sd.BufferDesc.Width = m_width;
+        sd.BufferDesc.Height = m_height;
+        sd.BufferDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM; // D2D 最喜欢的颜色格式
+        sd.BufferDesc.RefreshRate.Numerator = 60;
+        sd.BufferDesc.RefreshRate.Denominator = 1;
+        sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+        sd.OutputWindow = hwnd;
+        sd.SampleDesc.Count = 1;
+        sd.SampleDesc.Quality = 0;
+        sd.Windowed = TRUE;
+
+        HRESULT hr = D3D11CreateDeviceAndSwapChain(
+            NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, D3D11_CREATE_DEVICE_BGRA_SUPPORT, NULL, 0,
+            D3D11_SDK_VERSION, &sd, &pSwapChain, &pd3dDevice, NULL, &pd3dContext
+        );
+        if (FAILED(hr)) return false;
+
+        // 创建 DX11 渲染目标视图
+        ID3D11Texture2D* pBackBufferTex = nullptr;
+        pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (LPVOID*)&pBackBufferTex);
+        if (pBackBufferTex) {
+            pd3dDevice->CreateRenderTargetView(pBackBufferTex, NULL, &pmainRenderTargetView);
+            pBackBufferTex->Release();
+        }
+    }
+
+    // 2. 创建 D2D 工厂
     if (!m_pD2DFactory)
     {
         HRESULT hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &m_pD2DFactory);
         if (FAILED(hr)) return false;
     }
 
-    RECT rc;
-    GetClientRect(hwnd, &rc);
-    m_width = rc.right - rc.left;
-    m_height = rc.bottom - rc.top;
+    // 3. 【核心桥梁】：将 D2D 渲染目标绑定到 DX11 的后缓冲区
+    if (m_pRenderTarget) { m_pRenderTarget->Release(); m_pRenderTarget = nullptr; }
 
-    // 释放旧渲染目标（若存在），以便安全重建
-    if (m_pRenderTarget)
+    IDXGISurface* pDxgiSurface = nullptr;
+    HRESULT hr = pSwapChain->GetBuffer(0, __uuidof(IDXGISurface), (LPVOID*)&pDxgiSurface);
+    if (SUCCEEDED(hr))
     {
-        m_pRenderTarget->Release();
-        m_pRenderTarget = nullptr;
+        D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(
+            D2D1_RENDER_TARGET_TYPE_DEFAULT,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
+        );
+        hr = m_pD2DFactory->CreateDxgiSurfaceRenderTarget(pDxgiSurface, &props, &m_pRenderTarget);
+        pDxgiSurface->Release();
     }
-
-    HRESULT hr = m_pD2DFactory->CreateHwndRenderTarget(
-        D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_DEFAULT,
-            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE)),
-        D2D1::HwndRenderTargetProperties(hwnd, D2D1::SizeU(m_width, m_height)),
-        &m_pRenderTarget
-    );
-
     if (FAILED(hr)) return false;
 
-    // ----------------- 【初始化 CPU 画布与显卡纹理桥梁】 -----------------
-    // 1. 初始化 CPU 内存画布大小
-    m_frameBuffer.assign(m_width * m_height, 0xFF000000); // 默认为全黑不透明
+    // 4. 初始化 CPU 画布与显卡纹理桥梁
+    m_frameBuffer.assign(m_width * m_height, 0xFF000000);
 
-    // 2. 创建一个同等大小的 GPU 纹理位图
     if (m_pBackBufferBitmap) { m_pBackBufferBitmap->Release(); m_pBackBufferBitmap = nullptr; }
     hr = m_pRenderTarget->CreateBitmap(
         D2D1::SizeU(m_width, m_height),
         D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)),
         &m_pBackBufferBitmap
     );
-    // ------------------------------------------------------------------
 
     QueryPerformanceFrequency(&m_freq);
     QueryPerformanceCounter(&m_lastTime);
@@ -87,21 +115,49 @@ void Engine3D::Resize(int width, int height)
     m_width = width;
     m_height = height;
 
-    if (m_pRenderTarget)
+    if (pSwapChain)
     {
-        m_pRenderTarget->Resize(D2D1::SizeU(width, height));
+        // A. 必须先释放所有占用了后缓冲区引用的 D2D 与 DX11 资源
+        if (m_pBackBufferBitmap) { m_pBackBufferBitmap->Release(); m_pBackBufferBitmap = nullptr; }
+        if (m_pRenderTarget) { m_pRenderTarget->Release(); m_pRenderTarget = nullptr; }
+        if (pmainRenderTargetView) { pmainRenderTargetView->Release(); pmainRenderTargetView = nullptr; }
 
-        // 随着窗口缩放，同步重新分配 CPU 画布和显卡位图和深度缓冲图的大小
+        // B. 调整 DX11 交换链尺寸
+        pSwapChain->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, 0);
+
+        // C. 重新创建 DX11 渲染目标视图
+        ID3D11Texture2D* pBackBufferTex = nullptr;
+        pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (LPVOID*)&pBackBufferTex);
+        if (pBackBufferTex) {
+            pd3dDevice->CreateRenderTargetView(pBackBufferTex, NULL, &pmainRenderTargetView);
+            pBackBufferTex->Release();
+        }
+
+        // D. 重新将 D2D 渲染目标挂载到新的 DX11 后缓冲区
+        IDXGISurface* pDxgiSurface = nullptr;
+        HRESULT hr = pSwapChain->GetBuffer(0, __uuidof(IDXGISurface), (LPVOID*)&pDxgiSurface);
+        if (SUCCEEDED(hr))
+        {
+            D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(
+                D2D1_RENDER_TARGET_TYPE_DEFAULT,
+                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
+            );
+            m_pD2DFactory->CreateDxgiSurfaceRenderTarget(pDxgiSurface, &props, &m_pRenderTarget);
+            pDxgiSurface->Release();
+        }
+
+        // E. 重新配置 CPU 画布和显卡位图和深度缓冲图的大小
         m_frameBuffer.resize(width * height);
-
         m_depthBuffer.resize(width * height);
 
-        if (m_pBackBufferBitmap) { m_pBackBufferBitmap->Release(); m_pBackBufferBitmap = nullptr; }
-        m_pRenderTarget->CreateBitmap(
-            D2D1::SizeU(width, height),
-            D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)),
-            &m_pBackBufferBitmap
-        );
+        if (m_pRenderTarget)
+        {
+            m_pRenderTarget->CreateBitmap(
+                D2D1::SizeU(width, height),
+                D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)),
+                &m_pBackBufferBitmap
+            );
+        }
     }
 }
 
