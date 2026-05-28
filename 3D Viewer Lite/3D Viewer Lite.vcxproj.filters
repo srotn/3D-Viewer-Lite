@@ -56,5 +56,23 @@
     <ClInclude Include="imgui_impl_win32.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="imgui.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="imconfig.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="imgui_internal.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="imstb_textedit.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="imstb_rectpack.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="imstb_truetype.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

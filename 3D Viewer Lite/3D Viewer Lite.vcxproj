@@ -141,8 +141,14 @@
   <ItemGroup>
     <ClInclude Include="Engine3D.h" />
     <ClInclude Include="ExternalDependence.h" />
+    <ClInclude Include="imconfig.h" />
+    <ClInclude Include="imgui.h" />
     <ClInclude Include="imgui_impl_dx11.h" />
     <ClInclude Include="imgui_impl_win32.h" />
+    <ClInclude Include="imgui_internal.h" />
+    <ClInclude Include="imstb_rectpack.h" />
+    <ClInclude Include="imstb_textedit.h" />
+    <ClInclude Include="imstb_truetype.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

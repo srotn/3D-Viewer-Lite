@@ -1,12 +1,21 @@
 ﻿#include "Engine3D.h"
 
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 Engine3D engine;  // 全局引擎对象
 
 int mouse_x;
 int mouse_y;
 
+ID3D11Device* pd3dDevice = NULL;
+ID3D11DeviceContext* pd3dContext = NULL;
+IDXGISwapChain* pSwapChain = NULL;
+
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
+    // 【关键钩子】：优先处理 ImGui 消息
+    if (ImGui_ImplWin32_WndProcHandler(hwnd, uMsg, wParam, lParam))
+        return true;
+    
     switch (uMsg)
     {
     case WM_CREATE:
@@ -140,6 +149,19 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
     return DefWindowProc(hwnd, uMsg, wParam, lParam);
 }
 
+void InitDX11Device(HWND hwnd) {
+    DXGI_SWAP_CHAIN_DESC sd = {};
+    sd.BufferCount = 1;
+    sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    sd.OutputWindow = hwnd;
+    sd.SampleDesc.Count = 1;
+    sd.Windowed = TRUE;
+
+    D3D11CreateDeviceAndSwapChain(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, NULL, 0,
+        D3D11_SDK_VERSION, &sd, &pSwapChain, &pd3dDevice, NULL, &pd3dContext);
+}
+
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     // 窗口注册与创建（不变）
     const wchar_t CLASS_NAME[] = L"3DViewerWindow";
@@ -158,6 +180,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     ShowWindow(hwnd, nCmdShow);
     UpdateWindow(hwnd);
 
+    InitDX11Device(hwnd);
+
+    ImGui::CreateContext();
+    ImGui_ImplWin32_Init(hwnd);
+    ImGui_ImplDX11_Init(pd3dDevice, pd3dContext);
+
     MSG msg = {};
     while (true)
     {
@@ -175,6 +203,22 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 
         // 所有消息处理完毕后，立即渲染一帧（无上限帧率）
         engine.Render();
+
+        // 2. ImGui 渲染 (在引擎渲染后，覆盖在最上方)
+        ImGui_ImplDX11_NewFrame();
+        ImGui_ImplWin32_NewFrame();
+        ImGui::NewFrame();
+
+        // --- 在这里添加你的 UI 代码 ---
+        ImGui::Begin("Engine Debug");
+        // 1. 基础性能监控
+        ImGui::Text("Application average %.3f ms/frame", 1000.0f / ImGui::GetIO().Framerate);
+        ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+        ImGui::End();
+        // ----------------------------
+
+        ImGui::Render();
+        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 
     }
     return msg.wParam;

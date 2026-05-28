@@ -682,11 +682,7 @@ void Engine3D::Render()
         OnUserUpdate(deltaTime);
     }
 
-    // 3. 监控 EndDraw (把内存像素 CopyFromMemory 提交到显卡并 Present)
-    {
-        ProfileTimer t_end("3. EndDraw (Upload Buffer to GPU & Present)");
-        EndDraw();
-    }
+    EndDraw();
 }
 
 void Engine3D::UpdateYawAndPitch(int delta_x, int delta_y)

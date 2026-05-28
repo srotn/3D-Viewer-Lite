@@ -52,7 +52,7 @@ public:
 	void FovMinus();
 
 
-	std::vector<std::string> testobjects = { "Skull.obj", "Old Teapot.obj", "icosahedron.obj" };
+	std::vector<std::string> testobjects = { "Skull.obj", "Old Teapot.obj", "icosahedron.obj", "little fan.obj", "111.obj", "3d_Isometric_Cube_Designs.obj"};
 	std::string name = testobjects[1];
 	float fov = 60;
 	float zoom = 1;
