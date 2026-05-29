@@ -734,7 +734,7 @@ void Engine3D::Render()
         ProfileTimer t_begin("1. BeginDraw (Memory Buffer Clear)");
         BeginDraw();
     }
-
+  
     {
         ProfileTimer t_update("2. OnUserUpdate (Entire Logic & Rasterization)");
         OnUserUpdate(deltaTime);
@@ -755,8 +755,8 @@ void Engine3D::CreateRotationMatrix(float yaw, float pitch)
 {
     float cosYaw = cos(yaw);
     float sinYaw = sin(yaw);
-    float cosPitch = cos(pitch);
-    float sinPitch = sin(pitch);
+    float cosPitch = cos(pitch - 1.5707);
+    float sinPitch = sin(pitch - 1.5707);
     Rotation = {
         {
         { cosYaw,               0,                  sinYaw,             0 },
