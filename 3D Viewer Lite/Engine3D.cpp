@@ -1,6 +1,6 @@
 ﻿#include "Engine3D.h"
 
-// 一个简单的内联计时助手
+// Simple timer for profiling (output to VS output window)
 struct ProfileTimer {
     std::string name;
     std::chrono::high_resolution_clock::time_point start;
@@ -12,8 +12,6 @@ struct ProfileTimer {
     ~ProfileTimer() {
         auto end = std::chrono::high_resolution_clock::now();
         float duration = std::chrono::duration<float, std::milli>(end - start).count();
-
-        // 格式化输出到 Visual Studio 的输出窗口
         std::string output = "[Profile] " + name + ": " + std::to_string(duration) + " ms\n";
         OutputDebugStringA(output.c_str());
     }
@@ -42,14 +40,14 @@ bool Engine3D::Initialize(HWND hwnd)
     m_width = rc.right - rc.left;
     m_height = rc.bottom - rc.top;
 
-    // 1. 创建 DX11 设备与交换链
+    // Create DX11 device and swap chain if not exist
     if (!pd3dDevice)
     {
         DXGI_SWAP_CHAIN_DESC sd = {};
         sd.BufferCount = 1;
         sd.BufferDesc.Width = m_width;
         sd.BufferDesc.Height = m_height;
-        sd.BufferDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM; // D2D 最喜欢的颜色格式
+        sd.BufferDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
         sd.BufferDesc.RefreshRate.Numerator = 60;
         sd.BufferDesc.RefreshRate.Denominator = 1;
         sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
@@ -64,7 +62,7 @@ bool Engine3D::Initialize(HWND hwnd)
         );
         if (FAILED(hr)) return false;
 
-        // 创建 DX11 渲染目标视图
+        // Create DX11 render target view
         ID3D11Texture2D* pBackBufferTex = nullptr;
         pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (LPVOID*)&pBackBufferTex);
         if (pBackBufferTex) {
@@ -73,14 +71,14 @@ bool Engine3D::Initialize(HWND hwnd)
         }
     }
 
-    // 2. 创建 D2D 工厂
+    // Create D2D factory
     if (!m_pD2DFactory)
     {
         HRESULT hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &m_pD2DFactory);
         if (FAILED(hr)) return false;
     }
 
-    // 3. 【核心桥梁】：将 D2D 渲染目标绑定到 DX11 的后缓冲区
+    // Bind D2D render target to DX11 back buffer
     if (m_pRenderTarget) { m_pRenderTarget->Release(); m_pRenderTarget = nullptr; }
 
     IDXGISurface* pDxgiSurface = nullptr;
@@ -96,7 +94,7 @@ bool Engine3D::Initialize(HWND hwnd)
     }
     if (FAILED(hr)) return false;
 
-    // 4. 初始化 CPU 画布与显卡纹理桥梁
+    // Initialize CPU framebuffer and D2D bitmap
     m_frameBuffer.assign(m_width * m_height, 0xFF000000);
 
     if (m_pBackBufferBitmap) { m_pBackBufferBitmap->Release(); m_pBackBufferBitmap = nullptr; }
@@ -110,8 +108,6 @@ bool Engine3D::Initialize(HWND hwnd)
     QueryPerformanceCounter(&m_lastTime);
     m_firstFrame = true;
 
-    
-
     return SUCCEEDED(hr);
 }
 
@@ -122,15 +118,15 @@ void Engine3D::Resize(int width, int height)
 
     if (pSwapChain)
     {
-        // A. 必须先释放所有占用了后缓冲区引用的 D2D 与 DX11 资源
+        // Release resources that depend on back buffer
         if (m_pBackBufferBitmap) { m_pBackBufferBitmap->Release(); m_pBackBufferBitmap = nullptr; }
         if (m_pRenderTarget) { m_pRenderTarget->Release(); m_pRenderTarget = nullptr; }
         if (pmainRenderTargetView) { pmainRenderTargetView->Release(); pmainRenderTargetView = nullptr; }
 
-        // B. 调整 DX11 交换链尺寸
+        // Resize swap chain
         pSwapChain->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, 0);
 
-        // C. 重新创建 DX11 渲染目标视图
+        // Recreate DX11 render target view
         ID3D11Texture2D* pBackBufferTex = nullptr;
         pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (LPVOID*)&pBackBufferTex);
         if (pBackBufferTex) {
@@ -138,7 +134,7 @@ void Engine3D::Resize(int width, int height)
             pBackBufferTex->Release();
         }
 
-        // D. 重新将 D2D 渲染目标挂载到新的 DX11 后缓冲区
+        // Rebind D2D render target
         IDXGISurface* pDxgiSurface = nullptr;
         HRESULT hr = pSwapChain->GetBuffer(0, __uuidof(IDXGISurface), (LPVOID*)&pDxgiSurface);
         if (SUCCEEDED(hr))
@@ -151,7 +147,7 @@ void Engine3D::Resize(int width, int height)
             pDxgiSurface->Release();
         }
 
-        // E. 重新配置 CPU 画布和显卡位图和深度缓冲图的大小
+        // Resize CPU buffers
         m_frameBuffer.resize(width * height);
         m_depthBuffer.resize(width * height);
 
@@ -172,7 +168,6 @@ void Engine3D::BeginDraw()
         m_pRenderTarget->BeginDraw();
 
     std::fill(m_frameBuffer.begin(), m_frameBuffer.end(), 0x00808080);
-    // ====== 新增：清空深度缓冲区（填入无穷大） ======
     std::fill(m_depthBuffer.begin(), m_depthBuffer.end(), std::numeric_limits<float>::infinity());
 }
 
@@ -180,20 +175,16 @@ void Engine3D::EndDraw()
 {
     if (m_pRenderTarget)
     {
-        // ----------------- 【核心桥梁：将 CPU 纯手写像素统一上传 GPU】 -----------------
+        // Copy CPU framebuffer to GPU bitmap
         if (m_pBackBufferBitmap)
         {
-            // A. 把我们写满像素数据的 m_frameBuffer 整个复制到显卡纹理中
             m_pBackBufferBitmap->CopyFromMemory(
                 nullptr,
                 m_frameBuffer.data(),
-                m_width * sizeof(uint32_t) // 步长：每行有多少字节
+                m_width * sizeof(uint32_t)
             );
-
-            // B. 用显卡把这块纹理直接拉伸/贴到屏幕上（极速一枪头提交）
             m_pRenderTarget->DrawBitmap(m_pBackBufferBitmap);
         }
-        // -------------------------------------------------------------------------
 
         HRESULT hr = m_pRenderTarget->EndDraw();
         if (hr == D2DERR_RECREATE_TARGET)
@@ -217,10 +208,8 @@ int Engine3D::ScreenWidth()
 
 void Engine3D::Fill(short transparency, uint32_t color)
 {
-    //color mixing
     uint32_t alpha = static_cast<uint32_t>(transparency) & 0xFF;
     uint32_t target = (alpha << 24) | (color & 0x00FFFFFF);
-
     std::fill(m_frameBuffer.begin(), m_frameBuffer.end(), target);
 }
 
@@ -245,20 +234,17 @@ void Engine3D::Fill(triangle3D tri, short transparency, uint32_t color, int minC
     uint32_t alpha = static_cast<uint32_t>(transparency) & 0xFF;
     uint32_t target = (alpha << 24) | (color & 0x00FFFFFF);
 
-    // 默认不传参时，maxClipY 自动设为屏幕最底端
     if (maxClipY == -1) maxClipY = m_height - 1;
 
     vector3D A = transformedvectors[tri.point[0]];
     vector3D B = transformedvectors[tri.point[1]];
     vector3D C = transformedvectors[tri.point[2]];
 
-    // 【核心改动】：让包围盒的 Y 范围不仅裁剪到屏幕，还要裁剪到当前线程负责的 [minClipY, maxClipY] 区域
     int minX = std::max(0, (int)std::floor(std::min({ A.x, B.x, C.x })));
     int maxX = std::min(m_width - 1, (int)std::ceil(std::max({ A.x, B.x, C.x })));
     int minY = std::max(minClipY, (int)std::floor(std::min({ A.y, B.y, C.y })));
     int maxY = std::min(maxClipY, (int)std::ceil(std::max({ A.y, B.y, C.y })));
 
-    // 如果整个三角形都不在这个线程的管辖范围内，直接退出
     if (minY > maxY || minX > maxX) return;
 
     float denominator = (B.y - C.y) * (A.x - C.x) + (C.x - B.x) * (A.y - C.y);
@@ -281,9 +267,6 @@ void Engine3D::Fill(triangle3D tri, short transparency, uint32_t color, int minC
                 float current_z = (float)(alpha * A.z + beta * B.z + gamma * C.z);
                 int buffer_index = y * m_width + x;
 
-                
-
-                // 【此时绝对安全】：因为不同的 y 严格属于不同的线程，绝无冲突！
                 if (current_z < m_depthBuffer[buffer_index])
                 {
                     m_depthBuffer[buffer_index] = current_z;
@@ -296,11 +279,10 @@ void Engine3D::Fill(triangle3D tri, short transparency, uint32_t color, int minC
 
 void Engine3D::Drawline(int x1, int y1, int x2, int y2, short transparency, uint32_t color)
 {
-    //color mixing
     uint32_t alpha = static_cast<uint32_t>(transparency) & 0xFF;
     uint32_t target = (alpha << 24) | (color & 0x00FFFFFF);
 
-    // 1.右下，x主导
+    // 1. bottom-right, X dominant
     {
         int y_1 = y1;
         if (x1 < x2 && y2 > y1 && x2 - x1 >= y2 - y1)
@@ -315,7 +297,7 @@ void Engine3D::Drawline(int x1, int y1, int x2, int y2, short transparency, uint
             }
         }
     }
-    // 2. 右上, X主导
+    // 2. top-right, X dominant
     {
         int y_1 = y1;
         if (x1 < x2 && y2 < y1 && (x2 - x1) >= (y1 - y2))
@@ -326,12 +308,11 @@ void Engine3D::Drawline(int x1, int y1, int x2, int y2, short transparency, uint
                 {
                     m_frameBuffer[y_1 * m_width + x_1] = target;
                 }
-                // y_1 应该减小。当理想纵向进度比当前大 0.5 像素时执行 y_1--
                 if ((x_1 - x1) * (y1 - y2) * 2 > (2 * (y1 - y_1) + 1) * (x2 - x1)) y_1--;
             }
         }
     }
-    // 3. 左下, X主导
+    // 3. bottom-left, X dominant
     {
         int y_1 = y1;
         if (x1 > x2 && y2 > y1 && (x1 - x2) >= (y2 - y1))
@@ -342,12 +323,11 @@ void Engine3D::Drawline(int x1, int y1, int x2, int y2, short transparency, uint
                 {
                     m_frameBuffer[y_1 * m_width + x_1] = target;
                 }
-                // x_1 在减小，进度为 (x1 - x_1)。当理想纵向进度大 0.5 时执行 y_1++
                 if ((x1 - x_1) * (y2 - y1) * 2 > (2 * (y_1 - y1) + 1) * (x1 - x2)) y_1++;
             }
         }
     }
-    // 4. 左上, X主导
+    // 4. top-left, X dominant
     {
         int y_1 = y1;
         if (x1 > x2 && y2 < y1 && (x1 - x2) >= (y1 - y2))
@@ -358,12 +338,11 @@ void Engine3D::Drawline(int x1, int y1, int x2, int y2, short transparency, uint
                 {
                     m_frameBuffer[y_1 * m_width + x_1] = target;
                 }
-                // x_1 和 y_1 都在减小
                 if ((x1 - x_1) * (y1 - y2) * 2 > (2 * (y1 - y_1) + 1) * (x1 - x2)) y_1--;
             }
         }
     }
-    // 5. 右下, Y主导
+    // 5. bottom-right, Y dominant
     {
         int x_1 = x1;
         if (x1 < x2 && y2 > y1 && (y2 - y1) > (x2 - x1))
@@ -374,12 +353,11 @@ void Engine3D::Drawline(int x1, int y1, int x2, int y2, short transparency, uint
                 {
                     m_frameBuffer[y_1 * m_width + x_1] = target;
                 }
-                // 交换 X 和 Y 的角色，当理想横向进度比当前大 0.5 时执行 x_1++
                 if ((y_1 - y1) * (x2 - x1) * 2 > (2 * (x_1 - x1) + 1) * (y2 - y1)) x_1++;
             }
         }
     }
-    // 6. 右上, Y主导
+    // 6. top-right, Y dominant
     {
         int x_1 = x1;
         if (x1 < x2 && y2 < y1 && (y1 - y2) >(x2 - x1))
@@ -390,12 +368,11 @@ void Engine3D::Drawline(int x1, int y1, int x2, int y2, short transparency, uint
                 {
                     m_frameBuffer[y_1 * m_width + x_1] = target;
                 }
-                // y_1 减小，进度为 (y1 - y_1)，x_1 应该增加
                 if ((y1 - y_1) * (x2 - x1) * 2 > (2 * (x_1 - x1) + 1) * (y1 - y2)) x_1++;
             }
         }
     }
-    // 7. 左下, Y主导
+    // 7. bottom-left, Y dominant
     {
         int x_1 = x1;
         if (x1 > x2 && y2 > y1 && (y2 - y1) > (x1 - x2))
@@ -406,12 +383,11 @@ void Engine3D::Drawline(int x1, int y1, int x2, int y2, short transparency, uint
                 {
                     m_frameBuffer[y_1 * m_width + x_1] = target;
                 }
-                // y_1 增加，x_1 应该减小
                 if ((y_1 - y1) * (x1 - x2) * 2 > (2 * (x1 - x_1) + 1) * (y2 - y1)) x_1--;
             }
         }
     }
-    // 8. 左上, Y主导
+    // 8. top-left, Y dominant
     {
         int x_1 = x1;
         if (x1 > x2 && y2 < y1 && (y1 - y2) >(x1 - x2))
@@ -422,12 +398,11 @@ void Engine3D::Drawline(int x1, int y1, int x2, int y2, short transparency, uint
                 {
                     m_frameBuffer[y_1 * m_width + x_1] = target;
                 }
-                // y_1 和 x_1 都在减小
                 if ((y1 - y_1) * (x1 - x2) * 2 > (2 * (x1 - x_1) + 1) * (y1 - y2)) x_1--;
             }
         }
     }
-    // 9. 纯水平向右 (包含起点终点重合的点)
+    // 9. pure horizontal right
     {
         int y_1 = y1;
         if (y1 == y2 && x1 <= x2)
@@ -438,11 +413,10 @@ void Engine3D::Drawline(int x1, int y1, int x2, int y2, short transparency, uint
                 {
                     m_frameBuffer[y_1 * m_width + x_1] = target;
                 }
-                // 纯水平线，y_1 始终保持不变，无需误差判定
             }
         }
     }
-    // 10. 纯水平向左
+    // 10. pure horizontal left
     {
         int y_1 = y1;
         if (y1 == y2 && x1 > x2)
@@ -453,11 +427,10 @@ void Engine3D::Drawline(int x1, int y1, int x2, int y2, short transparency, uint
                 {
                     m_frameBuffer[y_1 * m_width + x_1] = target;
                 }
-                // 纯水平线，y_1 始终保持不变，无需误差判定
             }
         }
     }
-    // 11. 纯垂直向下
+    // 11. pure vertical down
     {
         int x_1 = x1;
         if (x1 == x2 && y1 < y2)
@@ -468,11 +441,10 @@ void Engine3D::Drawline(int x1, int y1, int x2, int y2, short transparency, uint
                 {
                     m_frameBuffer[y_1 * m_width + x_1] = target;
                 }
-                // 纯垂直线，x_1 始终保持不变，无需误差判定
             }
         }
     }
-    // 12. 纯垂直向上
+    // 12. pure vertical up
     {
         int x_1 = x1;
         if (x1 == x2 && y1 > y2)
@@ -483,12 +455,9 @@ void Engine3D::Drawline(int x1, int y1, int x2, int y2, short transparency, uint
                 {
                     m_frameBuffer[y_1 * m_width + x_1] = target;
                 }
-                // 纯垂直线，x_1 始终保持不变，无需误差判定
             }
         }
     }
-
-
 }
 
 void Engine3D::DrawTriangle(triangle3D tri, short transparency, uint32_t color)
@@ -506,20 +475,16 @@ void Engine3D::DrawMesh3D(float fElapsedTime)
 {
     {
         ProfileTimer t_geom("   [DrawMesh3D] P1: Vertex Transform & Projection");
-        //points process
-        //parallel process
+        // Transform and project all vertices in parallel
 #pragma omp parallel for
         for (int i = 0; i < verts.size(); i++)
         {
             vector3D vpoint = verts[i];
-
-            //step1 rotation
             vpoint = MtimesV(Rotation, vpoint);
-            vpoint.x *= zoom; // 放大顶点坐标以适应显示
+            vpoint.x *= zoom;
             vpoint.y *= zoom;
             vpoint.z *= zoom;
 
-            //step2 projection
             float x = vpoint.x;
             float y = vpoint.y;
             float z = vpoint.z;
@@ -530,20 +495,15 @@ void Engine3D::DrawMesh3D(float fElapsedTime)
         }
     }
 
-    int num_threads = omp_get_max_threads(); // 获取当前系统的最大可用CPU线程数
-    int strip_height = m_height / num_threads; // 计算每个线程分到的屏幕高度
-
-    // =================================================================
-    // 终极优化：二维无锁并行分箱架构
-    // =================================================================
+    int num_threads = omp_get_max_threads();
+    int strip_height = m_height / num_threads;
 
     struct PreparedTriangle {
         triangle3D tri;
         uint32_t color;
     };
 
-    // 二维任务箱：localBoxes[几何线程ID][目标屏幕条带t]
-    // 每个线程只写自己专属的一行，绝对不会产生数据竞争(Data Race)，因此不需要任何锁！
+    // 2D binning: localBoxes[geometry_thread][screen_strip]
     std::vector<std::vector<std::vector<PreparedTriangle>>> localBoxes(
         num_threads, std::vector<std::vector<PreparedTriangle>>(num_threads)
     );
@@ -551,23 +511,22 @@ void Engine3D::DrawMesh3D(float fElapsedTime)
     {
         ProfileTimer t_binning("   [DrawMesh3D] P2-1: Geometry & Binning Pass");
 
-        // 【优化一】把灯光的归一化（包含昂贵的 sqrt 耗时操作）提到循环外面！一帧只算一次
+        // Pre-normalize light directions (once per frame)
         vector3D rLightNorm = Rlight.normalize();
         vector3D gLightNorm = Glight.normalize();
         vector3D bLightNorm = Blight.normalize();
 
-        // 【优化二】让几何与分箱阶段也享受多线程并发！
 #pragma omp parallel for
         for (int i = 0; i < (int)meshInput.tris.size(); i++)
         {
-            int tid = omp_get_thread_num(); // 获取当前执行任务的线程 ID
+            int tid = omp_get_thread_num();
             triangle3D tri = meshInput.tris[i];
 
-            // 1. 背面剔除
+            // Backface culling
             float NormalValue = (transformedvectors[tri.point[1]].x - transformedvectors[tri.point[0]].x) * (transformedvectors[tri.point[2]].y - transformedvectors[tri.point[0]].y) - (transformedvectors[tri.point[1]].y - transformedvectors[tri.point[0]].y) * (transformedvectors[tri.point[2]].x - transformedvectors[tri.point[0]].x);
             if (NormalValue > 0) continue;
 
-            // 2. 光照计算（使用外面算好的归一化向量，纯乘加运算，极快）
+            // Lighting calculation
             tri.NormalVector = MtimesV(Rotation, tri.NormalVector);
 
             float R_Intensity = -256 * tri.NormalVector.dot(rLightNorm);
@@ -578,39 +537,34 @@ void Engine3D::DrawMesh3D(float fElapsedTime)
             if (G_Intensity < 0) G_Intensity = 0;
             if (B_Intensity < 0) B_Intensity = 0;
 
-            // 计算最终 RGB，每个通道 = 对应光源强度 * 对应光源颜色分量
             float finalR = R_Intensity * lightColorR.x + G_Intensity * lightColorG.x + B_Intensity * lightColorB.x;
             float finalG = R_Intensity * lightColorR.y + G_Intensity * lightColorG.y + B_Intensity * lightColorB.y;
             float finalB = R_Intensity * lightColorR.z + G_Intensity * lightColorG.z + B_Intensity * lightColorB.z;
-            // 除以 3 保持亮度范围，可根据需要调整
             finalR /= 3.0f; finalG /= 3.0f; finalB /= 3.0f;
-            // 裁剪到 0-255
             BYTE r = (BYTE)std::min(255.0f, std::max(0.0f, finalR));
             BYTE g = (BYTE)std::min(255.0f, std::max(0.0f, finalG));
             BYTE b = (BYTE)std::min(255.0f, std::max(0.0f, finalB));
             uint32_t finalColor = RGB(r, g, b);
 
-            // 3. 计算该三角形在屏幕上的实际 Y 轴边界
+            // Compute Y range of triangle to determine which screen strips it belongs to
             float ay = transformedvectors[tri.point[0]].y;
             float by = transformedvectors[tri.point[1]].y;
             float cy = transformedvectors[tri.point[2]].y;
             int triMinY = (int)std::floor(std::min({ ay, by, cy }));
             int triMaxY = (int)std::ceil(std::max({ ay, by, cy }));
 
-            // 【优化三】用 O(1) 的数学计算直接定位目标条带范围，彻底干掉整个屏幕宽度的循环判断
             int start_t = std::max(0, triMinY / strip_height);
             int end_t = std::min(num_threads - 1, triMaxY / strip_height);
 
             PreparedTriangle pt = { tri, finalColor };
             for (int t = start_t; t <= end_t; t++)
             {
-                // 往自己线程对应的私有格子里塞数据，无锁并发，内存吞吐量拉满
                 localBoxes[tid][t].push_back(pt);
             }
         }
     }
 
-    // 2. 纯净的并行光栅化阶段
+    // Parallel rasterization phase
     if (IsFillAndLight)
     {
         ProfileTimer t_raster_pure("   [DrawMesh3D] P2-2: Pure Multi-Thread Rasterization");
@@ -621,7 +575,6 @@ void Engine3D::DrawMesh3D(float fElapsedTime)
             int minClipY = t * strip_height;
             int maxClipY = (t == num_threads - 1) ? (m_height - 1) : (minClipY + strip_height - 1);
 
-            // 当前渲染线程 t，去收集所有几何线程 tid 投递到第 t 个条带里的三角形
             for (int tid = 0; tid < num_threads; tid++)
             {
                 for (size_t i = 0; i < localBoxes[tid][t].size(); i++)
@@ -632,9 +585,7 @@ void Engine3D::DrawMesh3D(float fElapsedTime)
         }
     }
 
-    // ==========================================
-    // 阶段 3：绘制线框（保持单线程串行，避免多线程画线冲突）
-    // ==========================================
+    // Serial wireframe drawing (single-threaded to avoid conflicts)
     if (IsWireFramePaint)
     {
         ProfileTimer t_wire("   [DrawMesh3D] P3: Serial WireFrame Paint");
@@ -670,13 +621,10 @@ void Engine3D::MoveToCenter()
         verts[i].y -= cy;
         verts[i].z -= cz;
     }
-    
-    return;
 }
 
 bool Engine3D::OnUserCreate()
 {
-    // read obj file
     verts.clear();
     zoom = 1;
     yaw = 0;
@@ -694,8 +642,7 @@ bool Engine3D::OnUserCreate()
 
     MoveToCenter();
 
-    // ===== 新增：自动计算合适的初始缩放 =====
-    // 1. 计算模型的包围盒
+    // Auto-calculate zoom based on model bounding box
     float minX = 1e30f, minY = 1e30f, minZ = 1e30f;
     float maxX = -1e30f, maxY = -1e30f, maxZ = -1e30f;
 
@@ -714,33 +661,23 @@ bool Engine3D::OnUserCreate()
     float sizeZ = maxZ - minZ;
     float maxDimension = std::max({ sizeX, sizeY, sizeZ });
 
-    // 防止模型为空或所有顶点重合
     if (maxDimension < 0.0001f)
         maxDimension = 1.0f;
 
-    // 2. 设定模型在屏幕上占据的比例（例如 70%）
     const float fillRatio = 0.7f;
-
-    // 3. 计算当前屏幕相关的参数
-    int screenDim = std::min(m_width, m_height);          // 取屏幕较小的维度，保证所有方向可见
-    float unitVal = std::sqrt((float)(m_width * m_width + m_height * m_height)) / 16.0f; // 与渲染时一致
-
-    // 4. 计算 zoom
-    // 屏幕坐标 x_screen ≈ 1.5 * unit * zoom * x_world   （忽略透视深度）
-    // 因此 maxDimension * 1.5 * unit * zoom = screenDim * fillRatio
+    int screenDim = std::min(m_width, m_height);
+    float unitVal = std::sqrt((float)(m_width * m_width + m_height * m_height)) / 16.0f;
     zoom = (screenDim * fillRatio) / (1.5f * unitVal * maxDimension);
 
-    // ===== 自动缩放结束 =====
-
-
+    // Precompute triangle normals
     for (int i = 0; i < meshInput.tris.size(); i++)
     {
         triangle3D tri = meshInput.tris[i];
 
         vector3D NormalVector = {
-            (verts[tri.point[1]].y - verts[tri.point[0]].y)* (verts[tri.point[2]].z - verts[tri.point[0]].z) - (verts[tri.point[1]].z - verts[tri.point[0]].z) * (verts[tri.point[2]].y - verts[tri.point[0]].y),
-            (verts[tri.point[1]].z - verts[tri.point[0]].z)* (verts[tri.point[2]].x - verts[tri.point[0]].x) - (verts[tri.point[1]].x - verts[tri.point[0]].x) * (verts[tri.point[2]].z - verts[tri.point[0]].z),
-            (verts[tri.point[1]].x - verts[tri.point[0]].x)* (verts[tri.point[2]].y - verts[tri.point[0]].y) - (verts[tri.point[1]].y - verts[tri.point[0]].y) * (verts[tri.point[2]].x - verts[tri.point[0]].x)
+            (verts[tri.point[1]].y - verts[tri.point[0]].y) * (verts[tri.point[2]].z - verts[tri.point[0]].z) - (verts[tri.point[1]].z - verts[tri.point[0]].z) * (verts[tri.point[2]].y - verts[tri.point[0]].y),
+            (verts[tri.point[1]].z - verts[tri.point[0]].z) * (verts[tri.point[2]].x - verts[tri.point[0]].x) - (verts[tri.point[1]].x - verts[tri.point[0]].x) * (verts[tri.point[2]].z - verts[tri.point[0]].z),
+            (verts[tri.point[1]].x - verts[tri.point[0]].x) * (verts[tri.point[2]].y - verts[tri.point[0]].y) - (verts[tri.point[1]].y - verts[tri.point[0]].y) * (verts[tri.point[2]].x - verts[tri.point[0]].x)
         };
 
         NormalVector = NormalVector.normalize();
@@ -752,14 +689,13 @@ bool Engine3D::OnUserCreate()
 
 bool Engine3D::OnUserUpdate(float fElapsedTime)
 {
-    //WORK
     Fill(255, 0x404040);
 
     CreateRotationMatrix(yaw, pitch);
     float fov_rad = fov * 3.1415926535 / 180.0;
     if (fov <= 0.0)
     {
-        distance = 10000.0;   // 正交
+        distance = 10000.0;
     }
     else
     {
@@ -777,17 +713,15 @@ bool Engine3D::OnUserUpdate(float fElapsedTime)
 
 void Engine3D::Render()
 {
-    // 整个 Render 函数的生命周期，统计单帧的总总耗时
     ProfileTimer t_total("=== Total Render Frame ===");
-    
+
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
-    float deltaTime = 0.016f;   // 默认值
+    float deltaTime = 0.016f;
 
     if (!m_firstFrame)
     {
         deltaTime = (float)((now.QuadPart - m_lastTime.QuadPart) / (float)m_freq.QuadPart);
-        // 限制最大增量（比如 0.1 秒），防止调试断点导致跳跃太大
         if (deltaTime > 0.1f) deltaTime = 0.016f;
     }
     else
@@ -796,13 +730,11 @@ void Engine3D::Render()
     }
     m_lastTime = now;
 
-    // 1. 监控 BeginDraw (清空画布与 Z-Buffer 耗时)
     {
         ProfileTimer t_begin("1. BeginDraw (Memory Buffer Clear)");
         BeginDraw();
     }
 
-    // 2. 监控核心逻辑、几何计算与多线程光栅化 (调用 DrawMesh3D 的地方)
     {
         ProfileTimer t_update("2. OnUserUpdate (Entire Logic & Rasterization)");
         OnUserUpdate(deltaTime);
@@ -815,14 +747,12 @@ void Engine3D::UpdateYawAndPitch(int delta_x, int delta_y)
 {
     yaw -= static_cast<float>(delta_x) / static_cast<float>(400) * 3.1415926;
     pitch += static_cast<float>(delta_y) / static_cast<float>(400) * 3.1415926;
-    // 限制 pitch 在 -90 到 +90 度之间
     if (pitch >= 3.14159 / 2) pitch = 3.14159 / 2;
     if (pitch <= -3.14159 / 2) pitch = -3.14159 / 2;
 }
 
 void Engine3D::CreateRotationMatrix(float yaw, float pitch)
 {
-    matrix rotation;
     float cosYaw = cos(yaw);
     float sinYaw = sin(yaw);
     float cosPitch = cos(pitch);
@@ -841,7 +771,7 @@ mesh3D Engine3D::LoadFromObjectFile(std::string filename)
 {
     std::ifstream f(filename);
     mesh3D mesh;
-    
+
     std::string line;
     while (std::getline(f, line))
     {
@@ -849,17 +779,17 @@ mesh3D Engine3D::LoadFromObjectFile(std::string filename)
         if (line.empty() || line[0] == '#') continue;
 
         if (line[0] == 'v' && line[1] == ' ')
-        { // 读取顶点
+        {
             std::stringstream ss(line);
             vector3D v;
             ss >> junk >> v.x >> v.y >> v.z;
             verts.push_back(v);
         }
         else if (line[0] == 'f' && line[1] == ' ')
-        { // 读取面索引
+        {
             std::stringstream ss(line);
             std::vector<std::string> face(4);
-            face[3] = ""; // 确保第四个元素存在，避免越界
+            face[3] = "";
             ss >> junk >> face[0] >> face[1] >> face[2] >> face[3];
 
             int v[4] = { 0 };
@@ -886,9 +816,8 @@ mesh3D Engine3D::LoadFromObjectFile(std::string filename)
                 std::stringstream block(face[i]);
                 block >> v[i] >> vt[i] >> vn[i];
             }
-            // OBJ是从1开始索引的，C++ vector是从0开始的，所以要 -1
-            mesh.tris.push_back({v[0] - 1, v[1] - 1, v[2] - 1});
-            if (v[3] != 0) mesh.tris.push_back({v[0] - 1, v[2] - 1, v[3] - 1});
+            mesh.tris.push_back({ v[0] - 1, v[1] - 1, v[2] - 1 });
+            if (v[3] != 0) mesh.tris.push_back({ v[0] - 1, v[2] - 1, v[3] - 1 });
         }
     }
     return mesh;
@@ -900,17 +829,15 @@ mesh3D Engine3D::LoadFromObjectFile(std::string filename)
 #include <sstream>
 #include <algorithm>
 
-// 用于描述 PLY 属性
 struct PlyProperty
 {
     std::string name;
-    std::string type;           // "float", "uchar", "int" 等
+    std::string type;
     bool isList = false;
-    std::string listCountType;  // 长度的类型
-    std::string listIndexType;  // 索引的类型
+    std::string listCountType;
+    std::string listIndexType;
 };
 
-// 辅助：读取一个小端 uint32（跨平台兼容）
 static uint32_t read_uint32_le(std::ifstream& f)
 {
     uint32_t val;
@@ -918,7 +845,6 @@ static uint32_t read_uint32_le(std::ifstream& f)
     return val;
 }
 
-// 辅助：读取一个小端 float
 static float read_float_le(std::ifstream& f)
 {
     float val;
@@ -937,18 +863,16 @@ mesh3D Engine3D::LoadFromPlyFile(std::string filename)
     }
 
     std::string line;
-    std::string format;               // "ascii", "binary_little_endian" 等
+    std::string format;
     int vertexCount = 0, faceCount = 0;
 
-    // 存储顶点和面元素的属性定义
     std::vector<PlyProperty> vertexProps;
     std::vector<PlyProperty> faceProps;
     bool inVertex = false, inFace = false;
 
-    // ---------- 解析头部 ----------
+    // Parse header
     while (std::getline(f, line))
     {
-        // 去除行首尾空白
         line.erase(0, line.find_first_not_of(" \t\r\n"));
         line.erase(line.find_last_not_of(" \t\r\n") + 1);
         if (line.empty() || line[0] == '#')
@@ -965,7 +889,7 @@ mesh3D Engine3D::LoadFromPlyFile(std::string filename)
         if (keyword == "format")
         {
             ss >> format;
-            std::string version; // 忽略
+            std::string version;
             ss >> version;
         }
         else if (keyword == "element")
@@ -990,14 +914,12 @@ mesh3D Engine3D::LoadFromPlyFile(std::string filename)
         {
             if (inVertex)
             {
-                // 例：property float x
                 PlyProperty prop;
                 ss >> prop.type >> prop.name;
                 vertexProps.push_back(prop);
             }
             else if (inFace)
             {
-                // 可能为普通属性或 list
                 std::string first;
                 ss >> first;
                 if (first == "list")
@@ -1009,7 +931,6 @@ mesh3D Engine3D::LoadFromPlyFile(std::string filename)
                 }
                 else
                 {
-                    // 普通属性，例如 property uchar red
                     PlyProperty prop;
                     prop.type = first;
                     ss >> prop.name;
@@ -1025,12 +946,11 @@ mesh3D Engine3D::LoadFromPlyFile(std::string filename)
         return mesh;
     }
 
-    // 是否为二进制模式
     bool isBinary = (format.find("binary") != std::string::npos);
 
     if (!isBinary)
     {
-        // ========== ASCII 模式（保留原逻辑）==========
+        // ASCII PLY
         verts.reserve(verts.size() + vertexCount);
         for (int i = 0; i < vertexCount; ++i)
         {
@@ -1072,22 +992,16 @@ mesh3D Engine3D::LoadFromPlyFile(std::string filename)
     }
     else
     {
-        // ========== 二进制模式 ==========
-        // 当前文件指针已经在 end_header 之后，也就是二进制数据起始处
-
-        // 读取顶点数据
+        // Binary PLY
         verts.reserve(verts.size() + vertexCount);
         for (int i = 0; i < vertexCount; ++i)
         {
             vector3D v;
-            bool xyzRead = false;
-            // 按照顶点属性顺序读取
             for (auto& prop : vertexProps)
             {
                 if (prop.name == "x")
                 {
                     v.x = read_float_le(f);
-                    xyzRead = true;
                 }
                 else if (prop.name == "y")
                 {
@@ -1099,7 +1013,6 @@ mesh3D Engine3D::LoadFromPlyFile(std::string filename)
                 }
                 else
                 {
-                    // 跳过不需要的属性
                     if (prop.type == "float")
                         read_float_le(f);
                     else if (prop.type == "uchar")
@@ -1109,24 +1022,21 @@ mesh3D Engine3D::LoadFromPlyFile(std::string filename)
                     else if (prop.type == "uint")
                         f.ignore(4);
                     else
-                        f.ignore(4); // 未知类型，跳过 4 字节
+                        f.ignore(4);
                 }
             }
             verts.push_back(v);
         }
 
-        // 读取面数据
         mesh.tris.reserve(faceCount);
         int minIdx = INT_MAX, maxIdx = INT_MIN;
 
         for (int i = 0; i < faceCount; ++i)
         {
-            // 先处理所有非 list 属性（如颜色），直接跳过
             for (auto& prop : faceProps)
             {
                 if (prop.isList)
-                    continue; // list 稍后处理
-                // 跳过固定属性
+                    continue;
                 if (prop.type == "uchar")       f.ignore(1);
                 else if (prop.type == "float")  f.ignore(4);
                 else if (prop.type == "int")    f.ignore(4);
@@ -1134,12 +1044,10 @@ mesh3D Engine3D::LoadFromPlyFile(std::string filename)
                 else                             f.ignore(4);
             }
 
-            // 读取 list 属性（顶点索引）
             for (auto& prop : faceProps)
             {
                 if (!prop.isList) continue;
 
-                // 读取长度计数
                 int n = 0;
                 if (prop.listCountType == "uchar")
                 {
@@ -1153,11 +1061,10 @@ mesh3D Engine3D::LoadFromPlyFile(std::string filename)
                 }
                 else
                 {
-                    // 默认尝试读一个 int
                     n = read_uint32_le(f);
                 }
 
-                if (n < 3) break; // 非法面
+                if (n < 3) break;
 
                 std::vector<int> idx(n);
                 for (int j = 0; j < n; ++j)
@@ -1171,19 +1078,16 @@ mesh3D Engine3D::LoadFromPlyFile(std::string filename)
                     }
                     else
                     {
-                        // 其他类型暂不处理
                         f.ignore(4);
                     }
                 }
 
-                // 扇形剖分
                 mesh.tris.push_back({ idx[0], idx[1], idx[2] });
                 for (int j = 3; j < n; ++j)
                     mesh.tris.push_back({ idx[0], idx[j - 1], idx[j] });
             }
         }
 
-        // 索引偏移处理（如果是 1‑based）
         if (minIdx == 1 && maxIdx <= (int)verts.size())
         {
             for (auto& tri : mesh.tris)
@@ -1203,14 +1107,12 @@ mesh3D Engine3D::LoadFromStlFile(std::string filename)
 {
     mesh3D mesh;
 
-    // 先用文本方式试探文件头，判断是 ASCII 还是二进制
     std::ifstream test(filename, std::ios::binary);
     if (!test) return mesh;
 
     char header[80] = {};
     test.read(header, 80);
     std::string headerStr(header, 80);
-    // ASCII STL 以 "solid" 开头
     bool isAscii = (headerStr.substr(0, 5) == "solid" && headerStr.find("facet") == std::string::npos);
     test.close();
 
@@ -1218,11 +1120,9 @@ mesh3D Engine3D::LoadFromStlFile(std::string filename)
     {
         std::ifstream f(filename);
         std::string line;
-        vector3D tmp;   // 用于跳过法线
-        int vCount = 0; // 累计顶点索引
+        int vCount = 0;
         while (std::getline(f, line))
         {
-            // 查找 "vertex"
             if (line.find("vertex") != std::string::npos)
             {
                 std::stringstream ss(line);
@@ -1231,7 +1131,6 @@ mesh3D Engine3D::LoadFromStlFile(std::string filename)
                 ss >> junk >> v.x >> v.y >> v.z;
                 verts.push_back(v);
                 vCount++;
-                // 每三个顶点组成一个三角形面
                 if (vCount % 3 == 0)
                 {
                     int idx0 = (int)verts.size() - 3;
@@ -1242,19 +1141,18 @@ mesh3D Engine3D::LoadFromStlFile(std::string filename)
             }
         }
     }
-    else // 二进制 STL
+    else
     {
         std::ifstream f(filename, std::ios::binary);
-        f.seekg(80);                     // 跳过 80 字节头
+        f.seekg(80);
         uint32_t triCount = 0;
-        f.read((char*)&triCount, 4);     // 三角形数量 (小端)
+        f.read((char*)&triCount, 4);
 
         verts.reserve(verts.size() + triCount * 3);
         mesh.tris.reserve(triCount);
 
         for (uint32_t i = 0; i < triCount; ++i)
         {
-            // 法线 (12字节) + 3个顶点 (各12字节) + 属性计数 (2字节)
             float normal[3];
             f.read((char*)normal, 12);
             for (int j = 0; j < 3; ++j)
@@ -1276,10 +1174,10 @@ mesh3D Engine3D::LoadFromStlFile(std::string filename)
 
 void Engine3D::FovPlus()
 {
-    if (fov < 150)fov += 5;
+    if (fov < 150) fov += 5;
 }
 
 void Engine3D::FovMinus()
 {
-    if (fov > 0)fov -= 5;
+    if (fov > 0) fov -= 5;
 }

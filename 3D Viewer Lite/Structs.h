@@ -6,7 +6,7 @@ struct vector3D
 {
     float x, y, z;
 
-    // 基础向量运算重载
+    // Basic vector operations
     vector3D operator+(const vector3D& v) const { return { x + v.x, y + v.y, z + v.z }; }
     vector3D operator-(const vector3D& v) const { return { x - v.x, y - v.y, z - v.z }; }
     vector3D operator*(float scalar) const { return { x * scalar, y * scalar, z * scalar }; }
@@ -17,7 +17,7 @@ struct vector3D
         return z < other.z;
     }
 
-    // 点乘、叉乘、归一化
+    // Dot product, cross product, normalize
     float dot(const vector3D& v) const {
         return x * v.x + y * v.y + z * v.z;
     }
