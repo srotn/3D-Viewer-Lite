@@ -47,12 +47,15 @@ public:
 
 	mesh3D LoadFromObjectFile(std::string filename);
 
+	mesh3D LoadFromPlyFile(std::string filename);
+
+	mesh3D LoadFromStlFile(std::string filename);
+
 	void FovPlus();
 
 	void FovMinus();
 
-	std::vector<std::string> testobjects = { "Skull.obj", "Old Teapot.obj", "icosahedron.obj", "little fan.obj", "111.obj", "3d_Isometric_Cube_Designs.obj"};
-	std::string name = testobjects[1];
+	std::string name = "Old Teapot.obj";
 	float fov = 60;
 	float zoom = 1;
 	vector3D Rlight = { -1, 1, 1 };
@@ -106,6 +109,12 @@ public:
 	IDXGISwapChain* pSwapChain = nullptr;
 	ID3D11RenderTargetView* pmainRenderTargetView = nullptr;
 
+	vector3D lightColorR = { 1.0f, 1.0f, 1.0f };   // 对红色光源的颜色调制
+	vector3D lightColorG = { 1.0f, 1.0f, 1.0f };
+	vector3D lightColorB = { 1.0f, 1.0f, 1.0f };
+
+	mesh3D meshInput;
+
 private:
 
 	// Direct2D 核心对象
@@ -121,7 +130,7 @@ private:
 	// 位图纹理
 	ID2D1Bitmap* m_pBackBufferBitmap = nullptr;
 
-	mesh3D meshInput;
+	
 
 	int m_width = 0, m_height = 0;
 	HWND m_hwnd = nullptr;

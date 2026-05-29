@@ -21,6 +21,9 @@ struct ProfileTimer {
 
 Engine3D::Engine3D()
 {
+    lightColorR = { 1.0f, 0.0f, 0.0f };
+    lightColorG = { 0.0f, 1.0f, 0.0f };
+    lightColorB = { 0.0f, 0.0f, 1.0f };
 }
 
 Engine3D::~Engine3D()
@@ -106,6 +109,8 @@ bool Engine3D::Initialize(HWND hwnd)
     QueryPerformanceFrequency(&m_freq);
     QueryPerformanceCounter(&m_lastTime);
     m_firstFrame = true;
+
+    
 
     return SUCCEEDED(hr);
 }
@@ -275,6 +280,8 @@ void Engine3D::Fill(triangle3D tri, short transparency, uint32_t color, int minC
             {
                 float current_z = (float)(alpha * A.z + beta * B.z + gamma * C.z);
                 int buffer_index = y * m_width + x;
+
+                
 
                 // 【此时绝对安全】：因为不同的 y 严格属于不同的线程，绝无冲突！
                 if (current_z < m_depthBuffer[buffer_index])
@@ -570,7 +577,18 @@ void Engine3D::DrawMesh3D(float fElapsedTime)
             if (R_Intensity < 0) R_Intensity = 0;
             if (G_Intensity < 0) G_Intensity = 0;
             if (B_Intensity < 0) B_Intensity = 0;
-            uint32_t finalColor = RGB(B_Intensity / 3, G_Intensity / 3, R_Intensity / 3);
+
+            // 计算最终 RGB，每个通道 = 对应光源强度 * 对应光源颜色分量
+            float finalR = R_Intensity * lightColorR.x + G_Intensity * lightColorG.x + B_Intensity * lightColorB.x;
+            float finalG = R_Intensity * lightColorR.y + G_Intensity * lightColorG.y + B_Intensity * lightColorB.y;
+            float finalB = R_Intensity * lightColorR.z + G_Intensity * lightColorG.z + B_Intensity * lightColorB.z;
+            // 除以 3 保持亮度范围，可根据需要调整
+            finalR /= 3.0f; finalG /= 3.0f; finalB /= 3.0f;
+            // 裁剪到 0-255
+            BYTE r = (BYTE)std::min(255.0f, std::max(0.0f, finalR));
+            BYTE g = (BYTE)std::min(255.0f, std::max(0.0f, finalG));
+            BYTE b = (BYTE)std::min(255.0f, std::max(0.0f, finalB));
+            uint32_t finalColor = RGB(r, g, b);
 
             // 3. 计算该三角形在屏幕上的实际 Y 轴边界
             float ay = transformedvectors[tri.point[0]].y;
@@ -659,9 +677,61 @@ void Engine3D::MoveToCenter()
 bool Engine3D::OnUserCreate()
 {
     // read obj file
-    meshInput = LoadFromObjectFile(name);
+    verts.clear();
+    zoom = 1;
+    yaw = 0;
+    pitch = 0;
+
+    std::string ext = name.substr(name.find_last_of('.'));
+    if (ext == ".obj")
+        meshInput = LoadFromObjectFile(name);
+    else if (ext == ".ply")
+        meshInput = LoadFromPlyFile(name);
+    else if (ext == ".stl")
+        meshInput = LoadFromStlFile(name);
+    else
+        OutputDebugStringA("Unsupported file format.\n");
 
     MoveToCenter();
+
+    // ===== 新增：自动计算合适的初始缩放 =====
+    // 1. 计算模型的包围盒
+    float minX = 1e30f, minY = 1e30f, minZ = 1e30f;
+    float maxX = -1e30f, maxY = -1e30f, maxZ = -1e30f;
+
+    for (const auto& v : verts)
+    {
+        if (v.x < minX) minX = v.x;
+        if (v.y < minY) minY = v.y;
+        if (v.z < minZ) minZ = v.z;
+        if (v.x > maxX) maxX = v.x;
+        if (v.y > maxY) maxY = v.y;
+        if (v.z > maxZ) maxZ = v.z;
+    }
+
+    float sizeX = maxX - minX;
+    float sizeY = maxY - minY;
+    float sizeZ = maxZ - minZ;
+    float maxDimension = std::max({ sizeX, sizeY, sizeZ });
+
+    // 防止模型为空或所有顶点重合
+    if (maxDimension < 0.0001f)
+        maxDimension = 1.0f;
+
+    // 2. 设定模型在屏幕上占据的比例（例如 70%）
+    const float fillRatio = 0.7f;
+
+    // 3. 计算当前屏幕相关的参数
+    int screenDim = std::min(m_width, m_height);          // 取屏幕较小的维度，保证所有方向可见
+    float unitVal = std::sqrt((float)(m_width * m_width + m_height * m_height)) / 16.0f; // 与渲染时一致
+
+    // 4. 计算 zoom
+    // 屏幕坐标 x_screen ≈ 1.5 * unit * zoom * x_world   （忽略透视深度）
+    // 因此 maxDimension * 1.5 * unit * zoom = screenDim * fillRatio
+    zoom = (screenDim * fillRatio) / (1.5f * unitVal * maxDimension);
+
+    // ===== 自动缩放结束 =====
+
 
     for (int i = 0; i < meshInput.tris.size(); i++)
     {
@@ -819,6 +889,386 @@ mesh3D Engine3D::LoadFromObjectFile(std::string filename)
             // OBJ是从1开始索引的，C++ vector是从0开始的，所以要 -1
             mesh.tris.push_back({v[0] - 1, v[1] - 1, v[2] - 1});
             if (v[3] != 0) mesh.tris.push_back({v[0] - 1, v[2] - 1, v[3] - 1});
+        }
+    }
+    return mesh;
+}
+
+#include <vector>
+#include <string>
+#include <fstream>
+#include <sstream>
+#include <algorithm>
+
+// 用于描述 PLY 属性
+struct PlyProperty
+{
+    std::string name;
+    std::string type;           // "float", "uchar", "int" 等
+    bool isList = false;
+    std::string listCountType;  // 长度的类型
+    std::string listIndexType;  // 索引的类型
+};
+
+// 辅助：读取一个小端 uint32（跨平台兼容）
+static uint32_t read_uint32_le(std::ifstream& f)
+{
+    uint32_t val;
+    f.read(reinterpret_cast<char*>(&val), sizeof(val));
+    return val;
+}
+
+// 辅助：读取一个小端 float
+static float read_float_le(std::ifstream& f)
+{
+    float val;
+    f.read(reinterpret_cast<char*>(&val), sizeof(val));
+    return val;
+}
+
+mesh3D Engine3D::LoadFromPlyFile(std::string filename)
+{
+    std::ifstream f(filename, std::ios::binary);
+    mesh3D mesh;
+    if (!f.is_open())
+    {
+        OutputDebugStringA(("PLY: Cannot open " + filename + "\n").c_str());
+        return mesh;
+    }
+
+    std::string line;
+    std::string format;               // "ascii", "binary_little_endian" 等
+    int vertexCount = 0, faceCount = 0;
+
+    // 存储顶点和面元素的属性定义
+    std::vector<PlyProperty> vertexProps;
+    std::vector<PlyProperty> faceProps;
+    bool inVertex = false, inFace = false;
+
+    // ---------- 解析头部 ----------
+    while (std::getline(f, line))
+    {
+        // 去除行首尾空白
+        line.erase(0, line.find_first_not_of(" \t\r\n"));
+        line.erase(line.find_last_not_of(" \t\r\n") + 1);
+        if (line.empty() || line[0] == '#')
+            continue;
+
+        if (line == "end_header")
+            break;
+
+        std::stringstream ss(line);
+        std::string keyword;
+        ss >> keyword;
+        std::transform(keyword.begin(), keyword.end(), keyword.begin(), ::tolower);
+
+        if (keyword == "format")
+        {
+            ss >> format;
+            std::string version; // 忽略
+            ss >> version;
+        }
+        else if (keyword == "element")
+        {
+            inVertex = inFace = false;
+            std::string elemType;
+            int count;
+            ss >> elemType >> count;
+            std::transform(elemType.begin(), elemType.end(), elemType.begin(), ::tolower);
+            if (elemType == "vertex")
+            {
+                vertexCount = count;
+                inVertex = true;
+            }
+            else if (elemType == "face")
+            {
+                faceCount = count;
+                inFace = true;
+            }
+        }
+        else if (keyword == "property")
+        {
+            if (inVertex)
+            {
+                // 例：property float x
+                PlyProperty prop;
+                ss >> prop.type >> prop.name;
+                vertexProps.push_back(prop);
+            }
+            else if (inFace)
+            {
+                // 可能为普通属性或 list
+                std::string first;
+                ss >> first;
+                if (first == "list")
+                {
+                    PlyProperty prop;
+                    prop.isList = true;
+                    ss >> prop.listCountType >> prop.listIndexType >> prop.name;
+                    faceProps.push_back(prop);
+                }
+                else
+                {
+                    // 普通属性，例如 property uchar red
+                    PlyProperty prop;
+                    prop.type = first;
+                    ss >> prop.name;
+                    faceProps.push_back(prop);
+                }
+            }
+        }
+    }
+
+    if (vertexCount == 0 || faceCount == 0)
+    {
+        OutputDebugStringA("PLY: Header missing vertex or face element.\n");
+        return mesh;
+    }
+
+    // 是否为二进制模式
+    bool isBinary = (format.find("binary") != std::string::npos);
+
+    if (!isBinary)
+    {
+        // ========== ASCII 模式（保留原逻辑）==========
+        verts.reserve(verts.size() + vertexCount);
+        for (int i = 0; i < vertexCount; ++i)
+        {
+            if (!std::getline(f, line)) break;
+            std::stringstream ss(line);
+            vector3D v;
+            ss >> v.x >> v.y >> v.z;
+            verts.push_back(v);
+        }
+
+        int minIdx = INT_MAX, maxIdx = INT_MIN;
+        mesh.tris.reserve(faceCount);
+        for (int i = 0; i < faceCount; ++i)
+        {
+            if (!std::getline(f, line)) break;
+            std::stringstream ss(line);
+            int n;
+            ss >> n;
+            if (n < 3) continue;
+            std::vector<int> idx(n);
+            for (int j = 0; j < n; ++j)
+            {
+                ss >> idx[j];
+                if (idx[j] < minIdx) minIdx = idx[j];
+                if (idx[j] > maxIdx) maxIdx = idx[j];
+            }
+            mesh.tris.push_back({ idx[0], idx[1], idx[2] });
+            for (int j = 3; j < n; ++j)
+                mesh.tris.push_back({ idx[0], idx[j - 1], idx[j] });
+        }
+
+        if (minIdx == 1 && maxIdx <= (int)verts.size())
+        {
+            for (auto& tri : mesh.tris)
+            {
+                tri.point[0]--; tri.point[1]--; tri.point[2]--;
+            }
+        }
+    }
+    else
+    {
+        // ========== 二进制模式 ==========
+        // 当前文件指针已经在 end_header 之后，也就是二进制数据起始处
+
+        // 读取顶点数据
+        verts.reserve(verts.size() + vertexCount);
+        for (int i = 0; i < vertexCount; ++i)
+        {
+            vector3D v;
+            bool xyzRead = false;
+            // 按照顶点属性顺序读取
+            for (auto& prop : vertexProps)
+            {
+                if (prop.name == "x")
+                {
+                    v.x = read_float_le(f);
+                    xyzRead = true;
+                }
+                else if (prop.name == "y")
+                {
+                    v.y = read_float_le(f);
+                }
+                else if (prop.name == "z")
+                {
+                    v.z = read_float_le(f);
+                }
+                else
+                {
+                    // 跳过不需要的属性
+                    if (prop.type == "float")
+                        read_float_le(f);
+                    else if (prop.type == "uchar")
+                        f.ignore(1);
+                    else if (prop.type == "int")
+                        f.ignore(4);
+                    else if (prop.type == "uint")
+                        f.ignore(4);
+                    else
+                        f.ignore(4); // 未知类型，跳过 4 字节
+                }
+            }
+            verts.push_back(v);
+        }
+
+        // 读取面数据
+        mesh.tris.reserve(faceCount);
+        int minIdx = INT_MAX, maxIdx = INT_MIN;
+
+        for (int i = 0; i < faceCount; ++i)
+        {
+            // 先处理所有非 list 属性（如颜色），直接跳过
+            for (auto& prop : faceProps)
+            {
+                if (prop.isList)
+                    continue; // list 稍后处理
+                // 跳过固定属性
+                if (prop.type == "uchar")       f.ignore(1);
+                else if (prop.type == "float")  f.ignore(4);
+                else if (prop.type == "int")    f.ignore(4);
+                else if (prop.type == "uint")   f.ignore(4);
+                else                             f.ignore(4);
+            }
+
+            // 读取 list 属性（顶点索引）
+            for (auto& prop : faceProps)
+            {
+                if (!prop.isList) continue;
+
+                // 读取长度计数
+                int n = 0;
+                if (prop.listCountType == "uchar")
+                {
+                    unsigned char count;
+                    f.read(reinterpret_cast<char*>(&count), 1);
+                    n = count;
+                }
+                else if (prop.listCountType == "int" || prop.listCountType == "uint")
+                {
+                    n = read_uint32_le(f);
+                }
+                else
+                {
+                    // 默认尝试读一个 int
+                    n = read_uint32_le(f);
+                }
+
+                if (n < 3) break; // 非法面
+
+                std::vector<int> idx(n);
+                for (int j = 0; j < n; ++j)
+                {
+                    if (prop.listIndexType == "int" || prop.listIndexType == "uint")
+                    {
+                        int val = (int)read_uint32_le(f);
+                        idx[j] = val;
+                        if (val < minIdx) minIdx = val;
+                        if (val > maxIdx) maxIdx = val;
+                    }
+                    else
+                    {
+                        // 其他类型暂不处理
+                        f.ignore(4);
+                    }
+                }
+
+                // 扇形剖分
+                mesh.tris.push_back({ idx[0], idx[1], idx[2] });
+                for (int j = 3; j < n; ++j)
+                    mesh.tris.push_back({ idx[0], idx[j - 1], idx[j] });
+            }
+        }
+
+        // 索引偏移处理（如果是 1‑based）
+        if (minIdx == 1 && maxIdx <= (int)verts.size())
+        {
+            for (auto& tri : mesh.tris)
+            {
+                tri.point[0]--; tri.point[1]--; tri.point[2]--;
+            }
+        }
+    }
+
+    char buf[256];
+    sprintf_s(buf, "PLY loaded: %d vertices, %d triangles\n", (int)verts.size(), (int)mesh.tris.size());
+    OutputDebugStringA(buf);
+    return mesh;
+}
+
+mesh3D Engine3D::LoadFromStlFile(std::string filename)
+{
+    mesh3D mesh;
+
+    // 先用文本方式试探文件头，判断是 ASCII 还是二进制
+    std::ifstream test(filename, std::ios::binary);
+    if (!test) return mesh;
+
+    char header[80] = {};
+    test.read(header, 80);
+    std::string headerStr(header, 80);
+    // ASCII STL 以 "solid" 开头
+    bool isAscii = (headerStr.substr(0, 5) == "solid" && headerStr.find("facet") == std::string::npos);
+    test.close();
+
+    if (isAscii)
+    {
+        std::ifstream f(filename);
+        std::string line;
+        vector3D tmp;   // 用于跳过法线
+        int vCount = 0; // 累计顶点索引
+        while (std::getline(f, line))
+        {
+            // 查找 "vertex"
+            if (line.find("vertex") != std::string::npos)
+            {
+                std::stringstream ss(line);
+                std::string junk;
+                vector3D v;
+                ss >> junk >> v.x >> v.y >> v.z;
+                verts.push_back(v);
+                vCount++;
+                // 每三个顶点组成一个三角形面
+                if (vCount % 3 == 0)
+                {
+                    int idx0 = (int)verts.size() - 3;
+                    int idx1 = (int)verts.size() - 2;
+                    int idx2 = (int)verts.size() - 1;
+                    mesh.tris.push_back({ idx0, idx1, idx2 });
+                }
+            }
+        }
+    }
+    else // 二进制 STL
+    {
+        std::ifstream f(filename, std::ios::binary);
+        f.seekg(80);                     // 跳过 80 字节头
+        uint32_t triCount = 0;
+        f.read((char*)&triCount, 4);     // 三角形数量 (小端)
+
+        verts.reserve(verts.size() + triCount * 3);
+        mesh.tris.reserve(triCount);
+
+        for (uint32_t i = 0; i < triCount; ++i)
+        {
+            // 法线 (12字节) + 3个顶点 (各12字节) + 属性计数 (2字节)
+            float normal[3];
+            f.read((char*)normal, 12);
+            for (int j = 0; j < 3; ++j)
+            {
+                float coord[3];
+                f.read((char*)coord, 12);
+                vector3D v = { coord[0], coord[1], coord[2] };
+                verts.push_back(v);
+            }
+            uint16_t attrib;
+            f.read((char*)&attrib, 2);
+
+            int baseIdx = (int)verts.size() - 3;
+            mesh.tris.push_back({ baseIdx, baseIdx + 1, baseIdx + 2 });
         }
     }
     return mesh;
